@@ -83,10 +83,6 @@ private:
 	// Calculates the ideal slot world position from the leader's foot location, using pure math.
 	FVector CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const;
 	
-	// Adjusts the slot position for environmental obstacles (walls, ledges) using sweeps and NavMesh projection.
-	// 障害物（壁・段差）を考慮した最終的な補正座標を算出。
-	FVector AdjustLocationForEnvironment(const FVector& IdealLocation,const AActor* CurrentLeader, const FVector& LeaderFootLoc) const;
-	
 	// Virtual delayed-rotation space used as the reference frame for follower target positions.
 	// Initialized as identity quaternion.
 	// 仲間の目標座標の基準となる「仮想の遅延回転空間」。
@@ -94,4 +90,31 @@ private:
 
 	// Smoothly updates the virtual rotation space each tick.
 	void UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader);
+	
+	// Adjusts the slot position for environmental obstacles (walls, ledges) using sweeps and NavMesh projection.
+	// 障害物（壁・段差）を考慮した最終的な補正座標を算出。
+	FVector AdjustLocationForEnvironment(const FVector& IdealLocation,const AActor* CurrentLeader, const FVector& LeaderFootLoc) const;
+
+	// ----- Environment adjustment helpers -----
+	// Each helper has a single responsibility, so AdjustLocationForEnvironment can act as a thin orchestrator.
+	// 各ヘルパーは単一責任を持ち、メイン関数は流れの調整役に徹する設計。
+
+	// Project a point onto NavMesh. Returns true on success.
+	// NavMeshへの投影を試みる。成功時のみOutResultを書き換える。
+	bool TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const;
+
+	// Find the actual ground Z at the given X,Y by tracing vertically.
+	// Critical for slope handling: slot's local-space Z=0 assumption breaks on inclines.
+	// スロットのローカルZ=0仮定が傾斜面で破綻するため、垂直トレースで実際の地面Zを取得。
+	bool TryFindGroundZ(const FVector& Point, float& OutZ, const AActor* IgnoreActor) const;
+
+	// Calculate sliding position when blocked by a vertical wall.
+	// Returns false for slopes (ImpactNormal.Z above threshold) so caller knows not to use sliding.
+	// 法線で「壁」と「傾斜」を区別。傾斜面の場合はfalseを返し、呼び出し側にスライディング不要を伝える。
+	bool TryCalculateWallSlide(const FVector& From, const FVector& To, const AActor* IgnoreActor, FVector& OutSlidLocation) const;
+
+	// Last-resort fallback when all NavMesh queries and sliding attempts fail.
+	// Tows the slot toward the leader to keep companions in a valid area.
+	// 全ての試みが失敗した時の最終手段。仲間が無効な領域に取り残されないようリーダー方向へ引き戻す。
+	FVector CalculateFallbackLocation(const FVector& LeaderFootLoc, const FVector& IdealLocation) const;
 };

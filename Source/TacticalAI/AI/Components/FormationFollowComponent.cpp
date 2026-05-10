@@ -145,69 +145,149 @@ FVector UFormationFollowComponent::CalculateIdealLocation(int32 SlotIndex, const
 	return VirtualFormationTransform.TransformPosition(ScaledOffset);
 }
 
-FVector UFormationFollowComponent::AdjustLocationForEnvironment(const FVector& IdealLocation,const AActor* CurrentLeader, const FVector& LeaderFootLoc) const
+FVector UFormationFollowComponent::AdjustLocationForEnvironment(const FVector& IdealLocation, const AActor* CurrentLeader, const FVector& LeaderFootLoc) const
 {
-	FVector FinalTargetLocation = IdealLocation;
-
-	FHitResult HitResult(ForceInit); 
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(CurrentLeader);
-
-	const float ChestHeight = 90.0f;
-	FVector TraceStart = LeaderFootLoc + FVector(0.f, 0.f, ChestHeight);
-	FVector TraceEnd = IdealLocation + FVector(0.f, 0.f, ChestHeight);
-	
-	// Sphere Sweep instead of Line Trace: matches character capsule radius (40)
-	// to avoid false negatives where a thin line passes through a gap a capsule can't fit.
-	// LineTraceは厚み0で狭い隙間を誤判定するため、Sphere Sweepでカプセル半径と同等の判定を行う。
-	FCollisionShape SphereShape = FCollisionShape::MakeSphere(40.0f);
-	bool bHitWall = GetWorld()->SweepSingleByChannel(HitResult, TraceStart, TraceEnd, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
-
-	if (bHitWall)
+	// [Step 1] Slope-aware Z correction
+	// The ideal location uses the leader's Z, which is wrong on inclines.
+	// Trace vertically at the slot's X,Y to find the actual ground height.
+	// 傾斜面ではリーダーZをそのまま使うと床にめり込んだり浮いたりするため、
+	// スロットのX,Y位置で垂直トレースして実際の地面Zを取得する。
+	FVector AdjustedIdeal = IdealLocation;
+	float GroundZ;
+	if (TryFindGroundZ(IdealLocation, GroundZ, CurrentLeader))
 	{
-		// Flatten everything to 2D to prevent the slot from sinking into the ground
-		// when there's a height difference between hit point and ideal location.
-		// 高低差で地面にめり込むバグを防ぐため、完全2D平面化して計算。
-		FVector HitLoc2D = HitResult.Location;
-		HitLoc2D.Z = 0.f;
-
-		FVector IdealLoc2D = IdealLocation;
-		IdealLoc2D.Z = 0.f;
-
-		FVector Normal2D = HitResult.ImpactNormal;
-		Normal2D.Z = 0.f;
-		Normal2D.Normalize();
-
-		// Project only the REMAINING distance from hit point to target onto the wall plane.
-		// 衝突点から目標までの「残り距離」のみを壁面に投影。
-		FVector RemainingDir = IdealLoc2D - HitLoc2D;
-		FVector SlidingDir = FVector::VectorPlaneProject(RemainingDir, Normal2D);
-
-		const float SafeMargin = 70.0f; // slightly larger than capsule radius (40)
-		FinalTargetLocation = HitLoc2D + SlidingDir + (Normal2D * SafeMargin);
-		FinalTargetLocation.Z = IdealLocation.Z; // restore original foot Z
+		AdjustedIdeal.Z = GroundZ;
 	}
 
-	// NavMesh projection: snap the slot to walkable navigation surface.
-	// Acts as the final safety net - if the slot isn't on NavMesh, we tow it back toward the leader.
-	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
-	if (NavSys)
+	// [Step 2] NavMesh projection as primary truth source
+	// If the corrected ideal lands on NavMesh, that's our answer. Cleanest path.
+	// NavMesh上に乗っていれば、それが最も信頼できる答え。即返却。
+	FVector NavResult;
+	if (TryProjectToNavMesh(AdjustedIdeal, NavResult))
 	{
-		FNavLocation ProjectedNavLoc;
-		if (NavSys->ProjectPointToNavigation(FinalTargetLocation, ProjectedNavLoc, FVector(50.f, 50.f, 250.f)))
+		return NavResult;
+	}
+
+	// [Step 3] NavMesh failed. Try wall sliding to find an alternative valid position.
+	// Wall sliding is now a *recovery tool* for when the ideal slot is unreachable,
+	// not the primary path-correction mechanism.
+	// 壁スライディングは「主な経路補正」ではなく「NavMesh投影失敗時の代替座標探索ツール」として再定義。
+	FVector SlidLocation;
+	if (TryCalculateWallSlide(LeaderFootLoc, AdjustedIdeal, CurrentLeader, SlidLocation))
+	{
+		if (TryProjectToNavMesh(SlidLocation, NavResult))
 		{
-			FinalTargetLocation = ProjectedNavLoc.Location; 
-		}
-		else if (bHitWall)
-		{
-			// Slid into an unreachable area. Tow back toward the leader as fallback.
-			// NavMesh外に滑り出た場合、リーダー方向へ強制的に引き戻す。
-			FVector DirToLeader = (LeaderFootLoc - FinalTargetLocation).GetSafeNormal2D();
-			FinalTargetLocation += DirToLeader * 150.f;
+			return NavResult;
 		}
 	}
 
-	return FinalTargetLocation;
+	// [Step 4] All attempts failed. Tow toward leader as the last resort.
+	// 全ての試みが失敗。リーダー方向へ強制引き戻し。
+	return CalculateFallbackLocation(LeaderFootLoc, IdealLocation);
+}
+
+bool UFormationFollowComponent::TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const
+{
+    UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
+    if (!NavSys) return false;
+
+    FNavLocation ProjectedLoc;
+    // Extent: narrow on X,Y to avoid snapping to unintended adjacent NavMesh,
+    // wide on Z to tolerate vertical mismatch from slope/stair scenarios.
+    // X,Yは狭く（隣接エリアへの誤投影防止）、Zは広く（傾斜・階段の高低差を吸収）。
+    if (NavSys->ProjectPointToNavigation(Point, ProjectedLoc, FVector(50.f, 50.f, 250.f)))
+    {
+        OutResult = ProjectedLoc.Location;
+        return true;
+    }
+    return false;
+}
+
+bool UFormationFollowComponent::TryFindGroundZ(const FVector& Point, float& OutZ, const AActor* IgnoreActor) const
+{
+    // Trace from well above the point straight down to find the actual ground.
+    // Trace range is generous (2000 each direction) to handle steep terrain and tall environments.
+    // 高低差の大きい地形にも対応するため、十分な範囲（上下2000）でトレース。
+    const float TraceUpHeight = 2000.0f;
+    const float TraceDownDepth = 2000.0f;
+
+    FVector TraceStart = Point + FVector(0.f, 0.f, TraceUpHeight);
+    FVector TraceEnd = Point - FVector(0.f, 0.f, TraceDownDepth);
+
+    FHitResult Hit;
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(IgnoreActor);
+
+    if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+    {
+        OutZ = Hit.Location.Z;
+        return true;
+    }
+    return false;
+}
+
+bool UFormationFollowComponent::TryCalculateWallSlide(const FVector& From, const FVector& To, const AActor* IgnoreActor, FVector& OutSlidLocation) const
+{
+    // Sphere Sweep at chest height: matches character capsule footprint
+    // (Line Trace's zero thickness produces false negatives in narrow gaps).
+    // LineTraceは厚み0で狭い隙間を誤判定するため、Sphere Sweepでカプセル相当の判定を行う。
+    const float ChestHeight = 90.0f;
+    FVector TraceStart = From + FVector(0.f, 0.f, ChestHeight);
+    FVector TraceEnd = To + FVector(0.f, 0.f, ChestHeight);
+
+    FHitResult HitResult(ForceInit);
+    FCollisionQueryParams QueryParams;
+    QueryParams.AddIgnoredActor(IgnoreActor);
+
+    FCollisionShape SphereShape = FCollisionShape::MakeSphere(40.0f);
+    bool bHit = GetWorld()->SweepSingleByChannel(HitResult, TraceStart, TraceEnd, FQuat::Identity, ECC_Visibility, SphereShape, QueryParams);
+
+    if (!bHit) return false;
+
+    // Distinguish vertical wall from steep slope using normal's Z component.
+    // ImpactNormal.Z near 0 = vertical wall, near 1 = mostly-horizontal floor/slope.
+    // Skip sliding for slopes — they're not obstacles, just terrain.
+    // 法線のZ成分で「壁」と「傾斜」を区別。傾斜面はそもそも障害物ではないのでスライディング対象外。
+    const float WallThreshold = 0.7f;
+    const float NormalZ = FMath::Abs(HitResult.ImpactNormal.Z);
+    if (NormalZ >= WallThreshold)
+    {
+        return false;
+    }
+
+    // Compute sliding position using vector projection onto the wall plane.
+    // Flatten to 2D to prevent vertical drift, then restore the original Z.
+    // 高低差で地面にめり込むバグを防ぐため、計算は完全2D平面化して行う。
+    FVector HitLoc2D = HitResult.Location;
+    HitLoc2D.Z = 0.f;
+
+    FVector To2D = To;
+    To2D.Z = 0.f;
+
+    FVector Normal2D = HitResult.ImpactNormal;
+    Normal2D.Z = 0.f;
+    Normal2D.Normalize();
+
+    // Project only the REMAINING distance from hit point to target onto the wall plane.
+    // 衝突点から目標までの「残り距離」のみを壁面に投影。
+    FVector RemainingDir = To2D - HitLoc2D;
+    FVector SlidingDir = FVector::VectorPlaneProject(RemainingDir, Normal2D);
+
+    const float SafeMargin = 70.0f;  // slightly larger than capsule radius (40)
+    OutSlidLocation = HitLoc2D + SlidingDir + (Normal2D * SafeMargin);
+    OutSlidLocation.Z = To.Z;  // restore original Z
+
+    return true;
+}
+
+FVector UFormationFollowComponent::CalculateFallbackLocation(const FVector& LeaderFootLoc, const FVector& IdealLocation) const
+{
+    // Companions are kept inside a known-safe radius rather than left at an invalid coordinate,
+    // which would cause AIController->MoveTo to fail or produce visible glitches.
+    // 仲間が無効な座標に取り残されAIControllerのMoveToが失敗するのを防ぐため、リーダー方向へ強制引き戻し。
+    const float TowDistance = 150.0f;
+    FVector DirToLeader = (LeaderFootLoc - IdealLocation).GetSafeNormal2D();
+    return IdealLocation + (DirToLeader * TowDistance);
 }
 
 void UFormationFollowComponent::UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader)
