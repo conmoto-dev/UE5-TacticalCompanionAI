@@ -8,6 +8,7 @@
 #include "DrawDebugHelpers.h"
 #include "Characters/PartyCharacter.h"
 #include "Party/PartyManager.h"
+#include "Data/FormationDataAsset.h"
 
 
 UFormationFollowComponent::UFormationFollowComponent()
@@ -19,20 +20,16 @@ void UFormationFollowComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	// ---------------------------------------------------------
-	// [Initial Slot Offsets]
-	// Defines local-space offsets for each formation slot.
-	// To be replaced with UDataAsset later so designers can edit at runtime.
-	// 将来的にはUDataAssetへ分離し、プランナーが調整可能にする。
-	// ---------------------------------------------------------
-	if (SlotOffsets.IsEmpty())
+	// Initialize cache size based on assigned formation.
+	// 割り当てられた隊形のスロット数に応じてキャッシュサイズを初期化。
+	if (CurrentFormation)
 	{
-		float FormationGap = 200.f; // Lateral gap between followers
-		SlotOffsets.Add(FVector(-100.f, -FormationGap, 0.f));    // Slot 0: leader's rear-left
-		SlotOffsets.Add(FVector(-100.f,  FormationGap, 0.f));    // Slot 1: leader's rear-right
-		SlotOffsets.Add(FVector(-FormationGap * 1.5f, 0.f, 0.f)); // Slot 2: leader's far-rear center
+		CachedSlotLocations.SetNum(CurrentFormation->Slots.Num());
 	}
-	CachedSlotLocations.SetNum(SlotOffsets.Num());
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FormationFollowComponent: CurrentFormation is not assigned."));
+	}
 }
 
 void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -73,10 +70,13 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	// ---------------------------------------------------------
 	// [Debug] Draw cached slot positions every frame (no compute cost).
 	// ---------------------------------------------------------
-	for (int32 i = 0; i < SlotOffsets.Num(); ++i)
+	if (CurrentFormation)
 	{
-		DrawDebugSphere(GetWorld(), CachedSlotLocations[i], 30.0f, 16, FColor::Green, false, -1.0f, 0, 2.0f);
-		DrawDebugLine(GetWorld(), LeaderFootLoc, CachedSlotLocations[i], FColor::Yellow, false, -1.0f, 0, 1.0f);
+		for (int32 i = 0; i < CurrentFormation->Slots.Num(); ++i)
+		{
+			DrawDebugSphere(GetWorld(), CachedSlotLocations[i], 30.0f, 16, FColor::Green, false, -1.0f, 0, 2.0f);
+			DrawDebugLine(GetWorld(), LeaderFootLoc, CachedSlotLocations[i], FColor::Yellow, false, -1.0f, 0, 1.0f);
+		}
 	}
 }
 
@@ -110,6 +110,8 @@ void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentL
 
 void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate)
 {
+	if (!CurrentFormation) return;
+	
 	const bool bHasMovedEnough = FVector::DistSquared(LeaderFootLoc, LastCalculatedLocation) > FMath::Square(50.0f);
 	
 	// Also recalculate when only rotation changed (e.g., leader spinning in place).
@@ -117,7 +119,7 @@ void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLo
 	
 	if (bForceUpdate || bHasMovedEnough || bIsRotating)
 	{
-		for (int32 i = 0; i < SlotOffsets.Num(); ++i)
+		for (int32 i = 0; i < CurrentFormation->Slots.Num(); ++i)
 		{
 			FVector IdealLoc = CalculateIdealLocation(i, LeaderFootLoc);
 			CachedSlotLocations[i] = AdjustLocationForEnvironment(IdealLoc, CurrentLeader, LeaderFootLoc);
@@ -129,7 +131,7 @@ void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLo
 
 FVector UFormationFollowComponent::CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const
 {
-	if (!SlotOffsets.IsValidIndex(SlotIndex)) return FVector::ZeroVector;
+	if (!CurrentFormation || !CurrentFormation->Slots.IsValidIndex(SlotIndex)) return FVector::ZeroVector;
 
 	// [Architecture note]
 	// We do NOT copy the leader's transform directly (which would jerk on sharp turns).
@@ -137,10 +139,8 @@ FVector UFormationFollowComponent::CalculateIdealLocation(int32 SlotIndex, const
 	// and the leader's foot position. This gives the formation a heavy, intentional feel.
 	// リーダーの即時回転ではなく、平滑化されたCachedFormationRotationを基準にする。
 	FTransform VirtualFormationTransform(CachedFormationRotation, LeaderFootLoc);
-
 	// Apply tension scale to the local offset.
-	FVector ScaledOffset = SlotOffsets[SlotIndex] * CurrentGapScale;
-
+	FVector ScaledOffset = CurrentFormation->Slots[SlotIndex].LocalOffset * CurrentGapScale;
 	// Convert local offset to world coordinates via the virtual transform.
 	return VirtualFormationTransform.TransformPosition(ScaledOffset);
 }

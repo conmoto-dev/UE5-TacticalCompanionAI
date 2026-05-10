@@ -7,6 +7,7 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "FormationFollowComponent.generated.h"
 
+class UFormationDataAsset;
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class TACTICALAI_API UFormationFollowComponent : public UActorComponent
@@ -23,10 +24,10 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
-	// Local-space offset of each formation slot. Adjustable by designers in the editor.
-	// 各スロットのローカルオフセット。エディタで調整可能。
+	/** Active formation data. Designers assign different DataAssets for different shapes. */
+	/** 現在使用中の隊形データ。デザイナーが用途に応じて差し替え可能。 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation")
-	TArray<FVector> SlotOffsets;
+	TObjectPtr<UFormationDataAsset> CurrentFormation;
 	
 	// Speed mapping: X = MinSpeed (Idle/Walk), Y = MaxSpeed (Sprint)
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")

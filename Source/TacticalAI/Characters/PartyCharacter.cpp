@@ -3,6 +3,7 @@
 #include "Characters/PartyCharacter.h"
 #include "Controllers/CompanionAIController.h"
 #include "AIController.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 APartyCharacter::APartyCharacter()
@@ -16,6 +17,10 @@ APartyCharacter::APartyCharacter()
 	// 仲間同士のスムーズな回避のためRVOを有効化。
 	GetCharacterMovement()->bUseRVOAvoidance = true;
 	GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
+	
+	
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 }
 
 void APartyCharacter::BeginPlay()
