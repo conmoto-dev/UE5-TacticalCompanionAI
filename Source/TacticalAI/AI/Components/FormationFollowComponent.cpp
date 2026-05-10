@@ -206,10 +206,10 @@ bool UFormationFollowComponent::TryProjectToNavMesh(const FVector& Point, FVecto
 bool UFormationFollowComponent::TryFindGroundZ(const FVector& Point, float& OutZ, const AActor* IgnoreActor) const
 {
     // Trace from well above the point straight down to find the actual ground.
-    // Trace range is generous (2000 each direction) to handle steep terrain and tall environments.
+    // Trace range is generous (500 each direction) to handle steep terrain and tall environments.
     // 高低差の大きい地形にも対応するため、十分な範囲（上下2000）でトレース。
-    const float TraceUpHeight = 2000.0f;
-    const float TraceDownDepth = 2000.0f;
+    const float TraceUpHeight = 500.0f;
+    const float TraceDownDepth = 500.0f;
 
     FVector TraceStart = Point + FVector(0.f, 0.f, TraceUpHeight);
     FVector TraceEnd = Point - FVector(0.f, 0.f, TraceDownDepth);
