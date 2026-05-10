@@ -1,0 +1,23 @@
+cat > .gitignore << 'EOF'
+# Visual Studio / Rider
+.vs/
+.idea/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.sln
+*.suo
+
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+*.xcodeproj
+*.xcworkspace
+
+# OS
+.DS_Store
+Thumbs.db
+EOF
