@@ -20,15 +20,19 @@ void UFormationFollowComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	// Initialize cache size based on assigned formation.
-	// 割り当てられた隊形のスロット数に応じてキャッシュサイズを初期化。
-	if (CurrentFormation)
+	// Default to wide formation if nothing assigned in editor.
+	// エディタでCurrentFormationが未設定でも、WideFormationがあれば自動適用。
+	if (!CurrentFormation && WideFormation)
+	{
+		ApplyFormation(WideFormation);
+	}
+	else if (CurrentFormation)
 	{
 		CachedSlotLocations.SetNum(CurrentFormation->Slots.Num());
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("FormationFollowComponent: CurrentFormation is not assigned."));
+		UE_LOG(LogTemp, Warning, TEXT("FormationFollowComponent: No formation assigned."));
 	}
 }
 
@@ -43,6 +47,18 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	APartyCharacter* CurrentLeader = Manager->GetLeader();
 	if (!CurrentLeader) return;
 
+	// [Auto formation switching]
+	// Probe corridor width and switch formation if needed (hysteresis applied).
+	// 通路幅を測定し、ヒステリシスで判定して必要なら隊形を切り替え。
+	const float Width = MeasureCorridorWidth(CurrentLeader);
+	if (UFormationDataAsset* DesiredFormation = SelectFormationByWidth(Width))
+	{
+		if (CurrentFormation != DesiredFormation)
+		{
+			ApplyFormation(DesiredFormation);
+		}
+	}
+	
 	UpdateGapScale(DeltaTime, CurrentLeader);
 	UpdateFormationRotation(DeltaTime, CurrentLeader);
 	
@@ -78,6 +94,15 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			DrawDebugLine(GetWorld(), LeaderFootLoc, CachedSlotLocations[i], FColor::Yellow, false, -1.0f, 0, 1.0f);
 		}
 	}
+}
+
+void UFormationFollowComponent::ApplyFormation(class UFormationDataAsset* NewFormation)
+{
+	if (!NewFormation) return;
+    
+	CurrentFormation = NewFormation;
+	CachedSlotLocations.SetNum(NewFormation->Slots.Num());
+	LastCalculatedLocation = FVector(FLT_MAX);
 }
 
 void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentLeader)
@@ -288,6 +313,76 @@ FVector UFormationFollowComponent::CalculateFallbackLocation(const FVector& Lead
     const float TowDistance = 150.0f;
     FVector DirToLeader = (LeaderFootLoc - IdealLocation).GetSafeNormal2D();
     return IdealLocation + (DirToLeader * TowDistance);
+}
+
+float UFormationFollowComponent::MeasureCorridorWidth(const AActor* Leader) const
+{
+	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
+	if (!NavSys || !Leader) return FLT_MAX;
+
+	const FVector LeaderLoc = Leader->GetActorLocation();
+	const FVector RightDir = Leader->GetActorRightVector();
+	
+	FVector RightHit, LeftHit;
+	const bool bRightBlocked = NavSys->NavigationRaycast(
+		GetWorld(),
+		LeaderLoc,
+		LeaderLoc + RightDir * CorridorProbeDistance,
+		RightHit
+	);
+	const bool bLeftBlocked = NavSys->NavigationRaycast(
+		GetWorld(),
+		LeaderLoc,
+		LeaderLoc - RightDir * CorridorProbeDistance,
+		LeftHit
+	);
+	
+	const float RightDist = bRightBlocked
+		? FVector::Dist(LeaderLoc, RightHit)
+		: CorridorProbeDistance;
+	const float LeftDist = bLeftBlocked
+		? FVector::Dist(LeaderLoc, LeftHit)
+		: CorridorProbeDistance;
+
+	
+	DrawDebugLine(GetWorld(), LeaderLoc, RightHit, FColor::Red, false, -1.0f, 0, 2.0f);
+	DrawDebugLine(GetWorld(), LeaderLoc, LeftHit, FColor::Red, false, -1.0f, 0, 2.0f);
+	
+	return RightDist + LeftDist;
+}
+
+UFormationDataAsset* UFormationFollowComponent::SelectFormationByWidth(float Width) const
+{
+	// Hysteresis: change only when crossing the OPPOSITE threshold.
+	// Below NarrowThreshold → Narrow. Above WideThreshold → Wide. Between → stay.
+	// 反対側の閾値を越えた時のみ切替、境界では現状維持。
+	if (Width < NarrowThreshold)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				1,                                                       // Key (같은 키는 덮어씀, -1 이면 누적)
+				0.0f,                                                    // Duration (0 = 1프레임)
+				FColor::Yellow,                                          
+				FString::Printf(TEXT("Narrow Width: %.1f"), Width)
+			);
+		}
+		return NarrowFormation;
+	}
+	else if (Width > WideThreshold)
+	{
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(
+				1,                                                       // Key (같은 키는 덮어씀, -1 이면 누적)
+				0.0f,                                                    // Duration (0 = 1프레임)
+				FColor::Yellow,                                          
+				FString::Printf(TEXT("Wide Width: %.1f"), Width)
+			);
+		}
+		return WideFormation;
+	}
+	return CurrentFormation;
 }
 
 void UFormationFollowComponent::UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader)

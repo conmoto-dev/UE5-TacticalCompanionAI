@@ -23,6 +23,10 @@ protected:
 public:	
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
+	// Internal: Set new formation data and reset cache. Called by PartyManager.
+	// PartyManagerからの呼び出し専用。隊形変更時のキャッシュリセット。
+	void ApplyFormation(class UFormationDataAsset* NewFormation);
+	
 protected:
 	/** Active formation data. Designers assign different DataAssets for different shapes. */
 	/** 現在使用中の隊形データ。デザイナーが用途に応じて差し替え可能。 */
@@ -117,4 +121,38 @@ private:
 	// Tows the slot toward the leader to keep companions in a valid area.
 	// 全ての試みが失敗した時の最終手段。仲間が無効な領域に取り残されないようリーダー方向へ引き戻す。
 	FVector CalculateFallbackLocation(const FVector& LeaderFootLoc, const FVector& IdealLocation) const;
+	
+public:
+	// [Environment-based formation switching]
+	// Two formations for environment-driven swap. Component selects between them
+	// each tick based on measured corridor width.
+	// 環境に応じて自動切り替えする2つの隊形。毎Tick通路幅を測定して選択。
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
+	TObjectPtr<UFormationDataAsset> WideFormation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
+	TObjectPtr<UFormationDataAsset> NarrowFormation;
+
+	// Hysteresis thresholds: switch to Narrow when below, Wide when above.
+	// Between values: keep current formation (prevents flickering at boundary).
+	// 二重閾値: 下回るとNarrow、上回るとWide、間は現状維持（境界での点滅防止）。
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
+	float NarrowThreshold = 300.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
+	float WideThreshold = 300.0f;
+
+	// Probe distance for left/right NavMesh edge detection.
+	// 左右のNavMesh境界探索距離。
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
+	float CorridorProbeDistance = 500.0f;
+	
+private:
+	// Measure total NavMesh-walkable width perpendicular to leader's facing.
+	// リーダーの正面に垂直な方向のNavMesh通行可能幅を測定。
+	float MeasureCorridorWidth(const AActor* Leader) const;
+
+	// Select target formation by measured width (hysteresis-aware).
+	// 測定幅とヒステリシスを考慮した目標隊形の選択。
+	UFormationDataAsset* SelectFormationByWidth(float Width) const;
 };
