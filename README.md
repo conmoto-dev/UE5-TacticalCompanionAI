@@ -48,6 +48,26 @@ Environment-based V/I switching is a decision *inside the peacetime mode*, so it
 
 </details>
 
+### Why StateTree is the planned next step for formation decision
+
+Environment-based V/I switching currently lives inside `FormationFollowComponent`
+as a simple width measurement + hysteresis if/else. This works for two formations
+in the peacetime mode, but the pattern doesn't scale: each new formation (combat
+surround, hazard avoidance, jump traversal) would compound the measurement and
+branching logic in a single function, mixing decision and behavior in the same place.
+
+StateTree (UE 5.7+) is the planned next step because it provides exactly the
+separation this system needs:
+- Each state (Wide / Narrow / Combat / Hazard ...) owns its own transition conditions
+- New formations attach as independent state nodes without touching existing ones
+- Composite conditions (e.g., "narrow corridor *and* sustained for 0.5s *and* not
+  in combat") become explicit tree nodes instead of nested if/else
+- Built-in support for hysteresis, cooldowns, and state priorities
+
+The current if/else acts as a deliberate stepping stone: it surfaces the actual
+shape of formation decisions and makes the StateTree migration a refactor of
+*known logic*, not a leap into unfamiliar territory.
+
 ---
 
 ## 🧩 Open Problems (Currently Investigating)
@@ -81,10 +101,12 @@ Default RVO is reactive and lacks group awareness. After sharp turns or formatio
 - Refactor camera/input from Character into PlayerController (true player/companion separation)
 
 **Following**
-- StateTree-based decision layer (peace / combat / yield)
-- NavMesh edge avoidance (cliff/hazard handling, see Open Problems #1)
-- NavLink-aware jump (see Open Problems #2)
-- Detour Crowd Manager integration (see Open Problems #3)
+- **StateTree-based decision layer** (Week 4) — migrate environment measurement
+  and formation selection out of FormationFollowComponent; enable composite
+  transition conditions; foundation for combat/hazard/yield mode integration
+- NavMesh edge avoidance (cliff/hazard handling)
+- NavLink-aware jump
+- Detour Crowd Manager integration
 - Enemy formation system (Flock-based)
 - Player skill → Companion skill chaining
 
