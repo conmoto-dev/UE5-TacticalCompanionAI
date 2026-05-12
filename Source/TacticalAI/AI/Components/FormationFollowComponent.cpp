@@ -152,6 +152,8 @@ void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentL
 
 void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate)
 {
+	check(CurrentFormation);
+	
 	const bool bHasMovedEnough = FVector::DistSquared(LeaderFootLoc, LastCalculatedLocation) > FMath::Square(50.0f);
 
 	// Recalculate when leader is rotating in place (no positional change).
