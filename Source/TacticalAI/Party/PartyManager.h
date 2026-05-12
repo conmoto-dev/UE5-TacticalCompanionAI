@@ -8,6 +8,7 @@
 
 class APartyCharacter;
 class UFormationFollowComponent;
+class UFormationDataAsset;
 
 UCLASS()
 class TACTICALAI_API APartyManager : public AActor
