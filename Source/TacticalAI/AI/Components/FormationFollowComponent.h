@@ -11,7 +11,18 @@ class UFormationDataAsset;
 class APartyCharacter;
 class APartyManager;
 
-UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
+/**
+ * Per-slot Yield state. Following = normal slot tracking, Yielding = stepped aside for player.
+ * スロット単位のYield状態。Following=通常追従、Yielding=プレイヤー退避中。
+ */
+UENUM(BlueprintType)
+enum class ESlotYieldState : uint8
+{
+	Following  UMETA(DisplayName = "Following"),
+	Yielding   UMETA(DisplayName = "Yielding"),
+};
+
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UFormationFollowComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -23,7 +34,7 @@ public:
 	UFormationFollowComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-	// Internal: Set new formation data and reset cache. Called by PartyManager.
+	// Set new formation data and reset cache. Called by PartyManager.
 	// PartyManagerからの呼び出し専用。隊形変更時のキャッシュリセット。
 	void ApplyFormation(class UFormationDataAsset* NewFormation);
 
@@ -45,50 +56,44 @@ protected:
 	// Locomotion (Gap Scale, Spring Physics, Rotation)
 	// =========================================================================
 protected:
-	// Speed mapping: X = MinSpeed (Idle/Walk), Y = MaxSpeed (Sprint)
+	// Speed mapping: X = MinSpeed (Idle/Walk), Y = MaxSpeed (Sprint).
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	FVector2D LeaderSpeedRange = FVector2D(0.f, 500.f);
 
-	// Scale mapping: X = base gap (1.0), Y = max expanded gap (e.g., 1.5)
+	// Scale mapping: X = base gap (1.0), Y = max expanded gap (e.g., 1.5).
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	FVector2D GapScaleRange = FVector2D(1.0f, 1.5f);
 
-	// Tension speed for formation expansion/contraction (rubber-band feel)
+	// Tension speed for formation expansion/contraction (rubber-band feel).
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	float GapInterpSpeed = 3.0f;
 
-	// [Locomotion - Spring Physics Parameters]
-	// Replaced FInterpTo with FloatSpringInterp for natural elastic motion.
-	// k value: spring stiffness (higher = stronger pull toward target)
+	// Spring stiffness (k): higher = stronger pull toward target.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	float SpringStiffness = 50.0f;
 
-	// c value: 1.0 = critical damping (no overshoot, settles precisely on target)
+	// Spring damping (c): 1.0 = critical damping (no overshoot, precise settling).
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	float SpringDamping = 1.0f;
 
-	// How quickly the formation rotation follows the leader's rotation.
-	// Lower values feel heavier and more sluggish.
+	// Formation rotation lerp speed. Lower = heavier/more sluggish feel on turns.
+	// 低い値ほど旋回時の「重み」が強くなる。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Formation|Locomotion")
 	float RotationInterpSpeed = 5.0f;
 
 private:
-	// Currently interpolating gap scale, kept as a member to maintain spring state across ticks.
+	// Currently interpolating gap scale; kept across ticks for spring state.
 	float CurrentGapScale = 1.0f;
 
-	// Spring velocity state for the gap scale's secondary spring system.
-	// The engine updates this by reference each tick.
-	// FloatSpringInterpが内部状態として参照渡しで更新する変数。
+	// Spring velocity state for FloatSpringInterp (engine updates by reference).
+	// FloatSpringInterpが参照渡しで毎Tick更新する内部状態。
 	FFloatSpringState GapScaleSpringVelocity;
 
-	// Virtual delayed-rotation space used as the reference frame for follower target positions.
+	// Virtual delayed-rotation space used as the reference frame for follower targets.
 	// 仲間の目標座標の基準となる「仮想の遅延回転空間」。
 	FQuat CachedFormationRotation = FQuat::Identity;
 
-	// State update: called per tick to mathematically update CurrentGapScale.
 	void UpdateGapScale(float DeltaTime, AActor* CurrentLeader);
-
-	// Smoothly updates the virtual rotation space each tick.
 	void UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader);
 
 
@@ -96,49 +101,44 @@ private:
 	// Slot Position Cache & Calculation
 	// =========================================================================
 private:
-	// Cached values for distance-based polling. Initialized to unreachable max so the first tick always updates.
-	// 距離ベースポーリング用のキャッシュ。初回Tickで必ず更新されるよう最大値で初期化。
+	// Cached values for distance-based polling. Initialized to MAX so first tick always updates.
+	// 距離ベースポーリング用キャッシュ。初回Tickで必ず更新されるよう最大値で初期化。
 	FVector LastCalculatedLocation = FVector(MAX_flt, MAX_flt, MAX_flt);
-	FQuat LastCalculatedRotation = FQuat::Identity;
+	FQuat   LastCalculatedRotation = FQuat::Identity;
 
 	// Final computed slot world positions, cached per update cycle.
 	TArray<FVector> CachedSlotLocations;
 
-	// Integrates UpdateGapScale + UpdateFormationRotation results into slot world positions.
-	// bForceUpdate=true skips the distance-threshold check and forces recalculation.
+	// Integrates GapScale + Rotation into slot world positions.
+	// bForceUpdate=true skips distance-threshold caching and forces recalculation.
 	void UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate = false);
 
-	// Calculates the ideal slot world position from the leader's foot location, using pure math.
+	// Pure math: ideal slot world position from leader's foot location.
 	FVector CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const;
 
 
 	// =========================================================================
 	// Environment Adjustment (NavMesh, Slope, Wall Slide)
-	// Each helper has a single responsibility; AdjustLocationForEnvironment is a thin orchestrator.
-	// 各ヘルパーは単一責任を持ち、メイン関数は流れの調整役に徹する設計。
+	// Each helper is single-responsibility; AdjustLocation is a thin orchestrator.
+	// 各ヘルパーは単一責任、メイン関数は流れの調整役。
 	// =========================================================================
 private:
-	// Adjusts the slot position for environmental obstacles (walls, ledges) using sweeps and NavMesh projection.
-	// 障害物（壁・段差）を考慮した最終的な補正座標を算出。
+	// 4-step orchestrator: ground Z → NavMesh project → wall slide → fallback.
 	FVector AdjustLocationForEnvironment(const FVector& IdealLocation, const AActor* CurrentLeader, const FVector& LeaderFootLoc) const;
 
-	// Project a point onto NavMesh. Returns true on success.
-	// NavMeshへの投影を試みる。成功時のみOutResultを書き換える。
+	// Project a point onto NavMesh. Writes OutResult only on success.
 	bool TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const;
 
-	// Find the actual ground Z at the given X,Y by tracing vertically.
-	// Critical for slope handling: slot's local-space Z=0 assumption breaks on inclines.
-	// スロットのローカルZ=0仮定が傾斜面で破綻するため、垂直トレースで実際の地面Zを取得。
+	// Find actual ground Z at X,Y by vertical trace. Critical for slope-aware Z correction.
+	// スロットのローカルZ=0仮定が傾斜面で破綻するため、垂直トレースで実地面Zを取得。
 	bool TryFindGroundZ(const FVector& Point, float& OutZ, const AActor* IgnoreActor) const;
 
-	// Calculate sliding position when blocked by a vertical wall.
-	// Returns false for slopes (ImpactNormal.Z above threshold) so caller knows not to use sliding.
-	// 法線で「壁」と「傾斜」を区別。傾斜面の場合はfalseを返し、呼び出し側にスライディング不要を伝える。
+	// Sliding position when blocked by vertical wall. Returns false for slopes (normal.Z above threshold).
+	// 法線で「壁」と「傾斜」を区別。傾斜面ではfalseを返しスライディング不要を通知。
 	bool TryCalculateWallSlide(const FVector& From, const FVector& To, const AActor* IgnoreActor, FVector& OutSlidLocation) const;
 
-	// Last-resort fallback when all NavMesh queries and sliding attempts fail.
-	// Tows the slot toward the leader to keep companions in a valid area.
-	// 全ての試みが失敗した時の最終手段。仲間が無効な領域に取り残されないようリーダー方向へ引き戻す。
+	// Last-resort: tow slot toward leader so AIController->MoveTo doesn't break on invalid coords.
+	// 全失敗時の最終手段。無効座標でMoveToが失敗しないようリーダー方向へ引き戻し。
 	FVector CalculateFallbackLocation(const FVector& LeaderFootLoc, const FVector& IdealLocation) const;
 
 
@@ -146,18 +146,16 @@ private:
 	// Auto Formation Switching (Corridor Width Measurement)
 	// =========================================================================
 public:
-	// Two formations for environment-driven swap. Component selects between them
-	// each tick based on measured corridor width.
-	// 環境に応じて自動切り替えする2つの隊形。毎Tick通路幅を測定して選択。
+	// Two formations swapped per measured corridor width.
+	// 通路幅で自動切り替えされる2隊形。
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
 	TObjectPtr<UFormationDataAsset> WideFormation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
 	TObjectPtr<UFormationDataAsset> NarrowFormation;
 
-	// Hysteresis thresholds: switch to Narrow when below, Wide when above.
-	// Between values: keep current formation (prevents flickering at boundary).
-	// 二重閾値: 下回るとNarrow、上回るとWide、間は現状維持（境界での点滅防止）。
+	// Hysteresis thresholds: switch to Narrow when below, Wide when above; between = keep current.
+	// 二重しきい値：下回るとNarrow、上回るとWide、間は現状維持（境界点滅防止）。
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
 	float NarrowThreshold = 300.0f;
 
@@ -165,17 +163,15 @@ public:
 	float WideThreshold = 300.0f;
 
 	// Probe distance for left/right NavMesh edge detection.
-	// 左右のNavMesh境界探索距離。
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Switching")
 	float CorridorProbeDistance = 500.0f;
 
 private:
-	// Measure total NavMesh-walkable width perpendicular to leader's facing.
-	// リーダーの正面に垂直な方向のNavMesh通行可能幅を測定。
+	// Total NavMesh-walkable width perpendicular to leader's facing.
+	// Known limitation: leader-position based; edge cases may misfire.
+	// リーダー位置基準の測定のため特定角ケースで誤発動の可能性あり。
 	float MeasureCorridorWidth(const AActor* Leader) const;
 
-	// Select target formation by measured width (hysteresis-aware).
-	// 測定幅とヒステリシスを考慮した目標隊形の選択。
 	UFormationDataAsset* SelectFormationByWidth(float Width) const;
 
 
@@ -184,13 +180,11 @@ private:
 	// =========================================================================
 protected:
 	// Speed below this counts as "stopped" for matching trigger.
-	// この速度未満なら「停止中」とみなす。
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Matching")
 	float StopSpeedThreshold = 50.0f;
 
-	// Sustained stop duration required before firing Hungarian matching.
-	// Prevents firing on brief slowdowns.
-	// ハンガリアン発動までの最低停止時間。一瞬の減速では発動しない。
+	// Sustained stop duration required before firing matching (prevents misfire on brief slowdowns).
+	// 短時間減速での誤発動を防ぐための必要持続時間。
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Formation|Matching")
 	float StopDurationToTrigger = 0.3f;
 
@@ -198,9 +192,9 @@ private:
 	/**
 	 * Slot-to-character mapping owned by the formation system.
 	 * SlotAssignment[slot_idx] = character occupying that slot.
-	 * Updated by Hungarian matching; Members order in PartyManager stays untouched.
+	 * Updated by Hungarian matching; PartyManager.Members order stays untouched.
 	 * 隊形システム内部のスロット-キャラクター割り当て。
-	 * ハンガリアンマッチングで更新。PartyManagerのMembers順序には影響しない。
+	 * ハンガリアン法で更新、PartyManager.Members順序は不変。
 	 */
 	UPROPERTY()
 	TArray<TObjectPtr<APartyCharacter>> SlotAssignment;
@@ -208,29 +202,96 @@ private:
 	// Accumulated time below StopSpeedThreshold; resets on movement resume.
 	float CurrentStopDuration = 0.f;
 
-	// True once matching has fired for the current stop event; resets on resume.
+	// True once matching fired for the current stop event; resets on resume.
 	bool bMatchingAppliedOnStop = false;
 
-	// Initialize or resync SlotAssignment with the current followers from PartyManager.
-	// PartyManagerの現在の仲間とSlotAssignmentを同期する。
 	void SyncSlotAssignmentWithManager(APartyManager* Manager);
-
-	// Run Hungarian matching to reassign slots based on minimum total distance.
-	// Updates SlotAssignment in-place. Manager is not involved.
-	// ハンガリアン法で総距離最小のスロット再割り当てを実行。
 	void ApplyHungarianMatching();
-
-	// Track stop state and fire matching when sustained stop is detected.
-	// 停止状態を追跡し、持続的な停止を検知したらマッチング発動。
 	void HandleStopMatching(float DeltaTime, AActor* CurrentLeader);
+
+
+	// =========================================================================
+	// Slot Query (External access for character-side logic)
+	// =========================================================================
+public:
+	/** Returns the world-space slot location assigned to the given character. */
+	/** 指定キャラクターに割り当てられたスロットのワールド座標を返す。 */
+	bool TryGetSlotLocationForCharacter(const APartyCharacter* Character, FVector& OutLocation) const;
+
+
+	// =========================================================================
+	// Yield Behavior (Per-slot path-clearing for player passage)
+	//
+	// Design notes:
+	// - Yield is a FORMATION-level policy (not a character-intrinsic behavior).
+	//   Different formations may need different yield logic (e.g., Flock vs Phalanx).
+	// - State is per-slot, not per-character: one yielding slot doesn't disturb others.
+	// - Characters remain passive: they receive coordinates, don't decide them.
+	//
+	// 設計メモ：
+	// - Yieldは隊形単位の方針（キャラクター本来の行動ではない）。
+	//   FlockやPhalanxなど将来の隊形では別ロジックが必要になり得る。
+	// - 状態はスロット単位、キャラ単位ではない（1スロットのYieldが他に影響しない）。
+	// - キャラクターは受動：座標を受け取るだけで決定はしない。
+	// =========================================================================
+protected:
+	// ───── Detection Parameters ─────
+
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
+	float YieldEnterRadius = 300.f;
+
+	// Larger than EnterRadius to form hysteresis (prevents flicker at boundary).
+	// EnterRadiusより大きく、ヒステリシスで境界点滅を防ぐ。
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
+	float YieldExitRadius = 200.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "180.0"))
+	float YieldConeHalfAngleDeg = 30.f;
+
+	// Player velocity below this is treated as "stopped" → cone disabled.
+	// この速度未満は停止扱い、コーン無効。
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
+	float PlayerMovingSpeedThreshold = 10.f;
+
+	// ───── Geometry Parameters ─────
+
+	// Side-step distance from occupant's current position.
+	// occupant現在位置から横方向に退避する距離。
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Geometry", meta = (ClampMin = "0.0"))
+	float YieldSideDistance = 200.f;
+
+private:
+	// ───── State (per slot, parallel to SlotAssignment) ─────
+
+	/** Per-slot yield state. Index synced with SlotAssignment. */
+	/** スロット別Yield状態。インデックスはSlotAssignmentと同期。 */
+	TArray<ESlotYieldState> SlotYieldStates;
+
+	/** Cached yield coordinate per slot. Only meaningful when Yielding. */
+	/** スロット別Yield座標キャッシュ。Yielding時のみ有効。 */
+	TArray<FVector> CachedYieldLocations;
+
+	// ───── Logic ─────
+
+	bool ShouldYieldForSlot(int32 SlotIdx) const;
+	bool ShouldExitYieldForSlot(int32 SlotIdx) const;
+
+	/** Computes yield target with NavMesh validation. Returns false if no valid spot. */
+	/** Yield目標を算出（NavMesh検証含む）。退避不可ならfalse。 */
+	bool TryCalculateYieldLocationForSlot(int32 SlotIdx, FVector& OutLocation) const;
+
+	/** Per-tick state machine update for all slots. */
+	/** 全スロットのステートマシン更新。 */
+	void UpdateYieldStates();
+
+	APawn* GetPlayerPawn() const;
 
 
 	// =========================================================================
 	// Debug
 	// =========================================================================
 public:
-	// Randomly shuffle SlotAssignment to make next matching visibly effective.
-	// Used by formation.ShuffleSlots console command for testing/demo.
-	// SlotAssignmentをランダム順列にし、次のマッチング効果を可視化。
+	// Randomly shuffle SlotAssignment so next matching has visible effect.
+	// SlotAssignmentをランダム化し、次マッチング効果を可視化。
 	void DebugShuffleSlotAssignment();
 };

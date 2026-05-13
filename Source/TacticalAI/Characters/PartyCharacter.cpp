@@ -13,12 +13,14 @@ APartyCharacter::APartyCharacter()
 	AIControllerClass = ACompanionAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	
-	// RVO Avoidance: enables smooth avoidance between companions.
-	// 仲間同士のスムーズな回避のためRVOを有効化。
+	// RVO Avoidance for smooth companion-vs-companion avoidance.
+	// May be replaced with Detour Crowd integration (week 2 evaluation).
+	// 仲間同士のスムーズな回避用。Detour Crowd検証時に置換予定。
 	GetCharacterMovement()->bUseRVOAvoidance = true;
 	GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
 	
-	
+	// Camera passes through capsule + mesh (no obstruction on follower characters).
+	// カメラがカプセル・メッシュを貫通（仲間越しのカメラブロック防止）。
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 }
@@ -39,17 +41,21 @@ void APartyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 }
 
-void APartyCharacter::UpdateTargetSlotLocation(const FVector& NewTarget)
+void APartyCharacter::UpdateTargetSlotLocation(const FVector& NewTarget, bool bForceRefresh)
 {
 	AAIController* AIC = Cast<AAIController>(GetController());
 	if (!AIC) return;
 
-	// Filter out tiny target changes. Calling MoveTo every frame is expensive
-	// (full path replanning), so we only re-issue the command past the threshold.
-	// 毎フレームMoveToを呼ぶとパス再計算で高コストなので、しきい値を超えた時のみ再発行。
-	const float DistSq = FVector::DistSquared(NewTarget, CurrentTargetLocation);
-	if (DistSq < FMath::Square(UpdateThreshold)) return;
-	
+	// Skip re-issue if target hasn't moved enough (cheap MoveTo deduplication).
+	// Force path is used during Yielding to guarantee MoveTo refresh on every tick.
+	// 目標がほぼ動いていなければ再発行スキップ。
+	// Yielding中はforceでキャッシュバイパスし毎Tick確実にMoveTo更新。
+	if (!bForceRefresh)
+	{
+		const float DistSq = FVector::DistSquared(NewTarget, CurrentTargetLocation);
+		if (DistSq < FMath::Square(UpdateThreshold)) return;
+	}
+    
 	CurrentTargetLocation = NewTarget;
 	AIC->MoveToLocation(NewTarget, AcceptanceRadius);
 }
