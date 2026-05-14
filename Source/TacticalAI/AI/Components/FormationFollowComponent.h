@@ -282,11 +282,28 @@ private:
 
 	/** Per-tick state machine update for all slots. */
 	/** 全スロットのステートマシン更新。 */
-	void UpdateYieldStates();
+	void UpdateYieldStates(float DeltaTime);
 
 	APawn* GetPlayerPawn() const;
 
-
+	// Reaction time delay before triggering Yield. Mimics human perception-action
+	// delay so 3 occupants entering the cone don't all yield to the same direction
+	// simultaneously (the main cause of deadlock).
+	// Reaction Timeモデルでcone進入から発動までの遅延。
+	// 同時反応の不自然さとデッドロックを軽減。
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
+	float YieldEntryDelay = 0.1f;
+	
+	/** Per-slot delay timer. Accumulates while ShouldYield is true; reset on condition break.
+	When >= YieldEntryDelay, re-evaluate and transition to Yielding. */
+	/** スロット別の遅延タイマー。ShouldYield成立中累積、不成立でリセット。
+		YieldEntryDelay到達時に再評価しYieldingへ遷移。 */
+	TArray<float> SlotYieldDelayTimers;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Geometry", meta = (ClampMin = "0.0"))
+	float YieldBackwardFactor = 0.25f;
+	
+	
 	// =========================================================================
 	// Debug
 	// =========================================================================
