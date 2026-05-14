@@ -188,9 +188,8 @@ void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLo
 	// Skip recalculation when leader is stable (distance + rotation threshold caching).
 	// リーダーが安定中は再計算スキップ（距離+回転しきい値キャッシュ）。
 	const bool bHasMovedEnough = FVector::DistSquared(LeaderFootLoc, LastCalculatedLocation) > FMath::Square(50.0f);
-	const bool bIsRotating = !CachedFormationRotation.Equals(LastCalculatedRotation, 0.01f);
 
-	if (bForceUpdate || bHasMovedEnough || bIsRotating)
+	if (bForceUpdate || bHasMovedEnough)
 	{
 		for (int32 i = 0; i < CurrentFormation->Slots.Num(); ++i)
 		{
