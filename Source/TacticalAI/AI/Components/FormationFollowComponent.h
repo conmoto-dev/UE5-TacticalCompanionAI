@@ -101,11 +101,6 @@ private:
 	// Slot Position Cache & Calculation
 	// =========================================================================
 private:
-	// Cached values for distance-based polling. Initialized to MAX so first tick always updates.
-	// 距離ベースポーリング用キャッシュ。初回Tickで必ず更新されるよう最大値で初期化。
-	FVector LastCalculatedLocation = FVector(MAX_flt, MAX_flt, MAX_flt);
-	FQuat   LastCalculatedRotation = FQuat::Identity;
-
 	// Final computed slot world positions, cached per update cycle.
 	TArray<FVector> CachedSlotLocations;
 
@@ -234,19 +229,21 @@ public:
 	// - 状態はスロット単位、キャラ単位ではない（1スロットのYieldが他に影響しない）。
 	// - キャラクターは受動：座標を受け取るだけで決定はしない。
 	// =========================================================================
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 protected:
 	// ───── Detection Parameters ─────
-
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
-	float YieldEnterRadius = 300.f;
+	float YieldEnterRadius = 500.f;
 
-	// Larger than EnterRadius to form hysteresis (prevents flicker at boundary).
-	// EnterRadiusより大きく、ヒステリシスで境界点滅を防ぐ。
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
-	float YieldExitRadius = 200.f;
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (
+	ClampMin = "0.0",
+	ToolTip = "Must be greater than or equal to YieldEnterRadius (auto-corrected if not). Forms hysteresis to prevent immediate re-exit after Yielding entry."))
+	float YieldExitRadius = 700.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "180.0"))
-	float YieldConeHalfAngleDeg = 30.f;
+	float YieldConeHalfAngleDeg = 50.f;
 
 	// Player velocity below this is treated as "stopped" → cone disabled.
 	// この速度未満は停止扱い、コーン無効。
@@ -291,8 +288,8 @@ private:
 	// simultaneously (the main cause of deadlock).
 	// Reaction Timeモデルでcone進入から発動までの遅延。
 	// 同時反応の不自然さとデッドロックを軽減。
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
-	float YieldEntryDelay = 0.1f;
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float YieldEntryDelay = 0.2f;
 	
 	/** Per-slot delay timer. Accumulates while ShouldYield is true; reset on condition break.
 	When >= YieldEntryDelay, re-evaluate and transition to Yielding. */
@@ -303,6 +300,16 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Geometry", meta = (ClampMin = "0.0"))
 	float YieldBackwardFactor = 0.25f;
 	
+	// Per-slot last-calculated location for distance-from-player based caching.
+	// Used by the new (per-slot) cache trigger; replaces single LastCalculatedLocation.
+	// 各スロットの最終算出位置。スロット別キャッシュトリガー用、単一基準を置換。
+	TArray<FVector> LastCalculatedSlotLocations;
+
+	// Player-distance threshold: a slot only recalculates when the player has moved
+	// at least this far from its last cached position.
+	// プレイヤーがスロットからこの距離以上離れた時のみ再算出。
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Cache", meta = (ClampMin = "0.0"))
+	float SlotCacheUpdateDistance = 500.f;
 	
 	// =========================================================================
 	// Debug

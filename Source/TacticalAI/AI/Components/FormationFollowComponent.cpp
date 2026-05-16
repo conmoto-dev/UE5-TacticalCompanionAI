@@ -23,6 +23,13 @@ void UFormationFollowComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (YieldExitRadius < YieldEnterRadius)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Yield] YieldExitRadius (%.0f) < YieldEnterRadius (%.0f) at BeginPlay. Auto-corrected."),
+			YieldExitRadius, YieldEnterRadius);
+		YieldExitRadius = YieldEnterRadius;
+	}
+	
 	// Default to WideFormation if CurrentFormation wasn't assigned in editor.
 	// エディタ未割当時はWideFormationにフォールバック。
 	if (!CurrentFormation && WideFormation)
@@ -72,9 +79,7 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	const float HalfHeight = CurrentLeader->GetSimpleCollisionHalfHeight();
 	const FVector LeaderFootLoc = CurrentLeader->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
 
-	// ===== [5] Slot world position cache =====
-	// Revisit during week 3 Detour Crowd integration.
-	// bForceUpdate=trueは意図的か要確認。元はfalse（距離ベースキャッシュ）。
+	// ===== [5] Slot world position cache (per-slot distance-based trigger) =====
 	UpdateFormationCache(LeaderFootLoc, CurrentLeader, false);
 
 	// ===== [6] Slot assignment sync + Hungarian on stop =====
@@ -154,14 +159,24 @@ void UFormationFollowComponent::ApplyFormation(class UFormationDataAsset* NewFor
 
 	CurrentFormation = NewFormation;
 	CachedSlotLocations.SetNum(NewFormation->Slots.Num());
-	LastCalculatedLocation = FVector(FLT_MAX);
-
+	LastCalculatedSlotLocations.Empty();
+	
 	// Invalidate so it gets re-synced on next tick with the new slot count.
 	// 新スロット数に合わせて次Tickで再同期。
 	SlotAssignment.Empty();
 	SlotYieldStates.Empty();
 	CachedYieldLocations.Empty();
 	SlotYieldDelayTimers.Empty();
+}
+
+void UFormationFollowComponent::UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader)
+{
+	if (!CurrentLeader) return;
+
+	// Quaternion interp (Slerp) to avoid -180/+180 reverse-rotation bug of FRotator (Euler).
+	// FRotator(オイラー角)補間は-180/180境界で逆回転バグが起きるためQuaternionで補間。
+	const FQuat TargetRotation = CurrentLeader->GetActorQuat();
+	CachedFormationRotation = FMath::QInterpTo(CachedFormationRotation, TargetRotation, DeltaTime, RotationInterpSpeed);
 }
 
 void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentLeader)
@@ -183,22 +198,55 @@ void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentL
 
 void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate)
 {
-	check(CurrentFormation);
+    check(CurrentFormation);
 
-	// Skip recalculation when leader is stable (distance + rotation threshold caching).
-	// リーダーが安定中は再計算スキップ（距離+回転しきい値キャッシュ）。
-	const bool bHasMovedEnough = FVector::DistSquared(LeaderFootLoc, LastCalculatedLocation) > FMath::Square(50.0f);
+    const int32 SlotCount = CurrentFormation->Slots.Num();
 
-	if (bForceUpdate || bHasMovedEnough)
-	{
-		for (int32 i = 0; i < CurrentFormation->Slots.Num(); ++i)
-		{
-			FVector IdealLoc = CalculateIdealLocation(i, LeaderFootLoc);
-			CachedSlotLocations[i] = AdjustLocationForEnvironment(IdealLoc, CurrentLeader, LeaderFootLoc);
-		}
-		LastCalculatedLocation = LeaderFootLoc;
-		LastCalculatedRotation = CachedFormationRotation;
-	}
+    // Sync per-slot cache array.
+    // スロット別キャッシュ配列の同期。
+    if (LastCalculatedSlotLocations.Num() != SlotCount)
+    {
+        LastCalculatedSlotLocations.Init(FVector(MAX_flt, MAX_flt, MAX_flt), SlotCount);
+    }
+
+    // Get player location once for per-slot distance check.
+    // プレイヤー位置を1回取得。
+    const APawn* Player = GetPlayerPawn();
+    const bool bHasPlayer = (Player != nullptr);
+    const FVector PlayerLoc = bHasPlayer ? Player->GetActorLocation() : FVector::ZeroVector;
+
+    // Per-slot trigger: update only when the slot's last cached position is
+    // far enough from the player. This prevents the slot from "chasing" the
+    // player during passage/Yield, which previously caused occupants to
+    // cross the player's path on Yield exit.
+    // スロット別トリガー: プレイヤーがスロットから十分離れた時のみ再算出。
+    // Yield/通過中にスロット座標がプレイヤーを追う現象を防ぐ。
+    for (int32 i = 0; i < SlotCount; ++i)
+    {
+        bool bShouldUpdate = bForceUpdate;
+
+        if (!bShouldUpdate)
+        {
+            if (bHasPlayer)
+            {
+                const float DistSq = FVector::DistSquared(LastCalculatedSlotLocations[i], PlayerLoc);
+                bShouldUpdate = (DistSq > FMath::Square(SlotCacheUpdateDistance));
+            }
+            else
+            {
+                // No-player fallback: always update (degenerate case).
+                // プレイヤー不在時は常に更新。
+                bShouldUpdate = true;
+            }
+        }
+
+        if (bShouldUpdate)
+        {
+            const FVector IdealLoc = CalculateIdealLocation(i, LeaderFootLoc);
+            CachedSlotLocations[i] = AdjustLocationForEnvironment(IdealLoc, CurrentLeader, LeaderFootLoc);
+            LastCalculatedSlotLocations[i] = CachedSlotLocations[i];
+        }
+    }
 }
 
 FVector UFormationFollowComponent::CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const
@@ -398,16 +446,6 @@ UFormationDataAsset* UFormationFollowComponent::SelectFormationByWidth(float Wid
 	return CurrentFormation;
 }
 
-void UFormationFollowComponent::UpdateFormationRotation(float DeltaTime, AActor* CurrentLeader)
-{
-	if (!CurrentLeader) return;
-
-	// Quaternion interp (Slerp) to avoid -180/+180 reverse-rotation bug of FRotator (Euler).
-	// FRotator(オイラー角)補間は-180/180境界で逆回転バグが起きるためQuaternionで補間。
-	const FQuat TargetRotation = CurrentLeader->GetActorQuat();
-	CachedFormationRotation = FMath::QInterpTo(CachedFormationRotation, TargetRotation, DeltaTime, RotationInterpSpeed);
-}
-
 void UFormationFollowComponent::SyncSlotAssignmentWithManager(APartyManager* Manager)
 {
 	if (!Manager || !CurrentFormation) return;
@@ -564,6 +602,23 @@ static FAutoConsoleCommandWithWorld GShuffleSlotsCommand(
 // Yield Behavior implementation
 // =========================================================================
 
+#if WITH_EDITOR
+void UFormationFollowComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+
+	// Yield hysteresis requires Exit >= Enter to prevent immediate re-exit
+	// after Yielding entry. Enforce automatically in editor.
+	// Yield ヒステリシス: Enter直後の即時Exit防止のためExit >= Enter強制。
+	if (YieldExitRadius < YieldEnterRadius)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Yield] YieldExitRadius (%.0f) < YieldEnterRadius (%.0f). Auto-corrected to %.0f."),
+			YieldExitRadius, YieldEnterRadius, YieldEnterRadius);
+		YieldExitRadius = YieldEnterRadius;
+	}
+}
+#endif
+
 APawn* UFormationFollowComponent::GetPlayerPawn() const
 {
 	if (const UWorld* World = GetWorld())
@@ -632,134 +687,134 @@ bool UFormationFollowComponent::ShouldExitYieldForSlot(int32 SlotIdx) const
 
 bool UFormationFollowComponent::TryCalculateYieldLocationForSlot(int32 SlotIdx, FVector& OutLocation) const
 {
-	if (!SlotAssignment.IsValidIndex(SlotIdx)) return false;
-	if (!CachedSlotLocations.IsValidIndex(SlotIdx)) return false;
+    if (!SlotAssignment.IsValidIndex(SlotIdx)) return false;
+    if (!CachedSlotLocations.IsValidIndex(SlotIdx)) return false;
 
-	APartyCharacter* Occupant = SlotAssignment[SlotIdx];
-	if (!Occupant) return false;
+    APartyCharacter* Occupant = SlotAssignment[SlotIdx];
+    if (!Occupant) return false;
 
-	const APawn* Player = GetPlayerPawn();
-	if (!Player) return false;
+    const APawn* Player = GetPlayerPawn();
+    if (!Player) return false;
 
-	// [1] Player travel direction (horizontal only).
-	// プレイヤー進行方向（水平のみ）。
-	const FVector PlayerVelocity = Player->GetVelocity();
-	const FVector PlayerDirFlat = FVector(PlayerVelocity.X, PlayerVelocity.Y, 0.f).GetSafeNormal();
-	if (PlayerDirFlat.IsNearlyZero()) return false;
-	
-	// TryCalculateYieldLocationForSlot 의 후보 생성 부분
-	const FVector OccupantLoc = Occupant->GetActorLocation();
-	const FVector PlayerLoc = Player->GetActorLocation();
+    // [1] Player travel direction (horizontal only).
+    // Player speed already validated in ShouldYieldForSlot; PlayerDirFlat won't be zero here.
+    // プレイヤー進行方向（水平のみ）。速度検証済みのためここではzero不可。
+    const FVector PlayerVelocity = Player->GetVelocity();
+    const FVector PlayerDirFlat = FVector(PlayerVelocity.X, PlayerVelocity.Y, 0.f).GetSafeNormal();
 
-	// Correct right vector (UE: Right = Up × Forward).
-	// UEは Up × Forward = Right。
-	const FVector SideDir = FVector::CrossProduct(FVector::UpVector, PlayerDirFlat);
+    const FVector OccupantLoc = Occupant->GetActorLocation();
+    const FVector PlayerLoc = Player->GetActorLocation();
 
-	// Project player velocity onto player→occupant direction.
-	// Absolute scalar: walking vs running produces different backward intensity (intentional).
-	// プレイヤー速度をプレイヤー→occupant方向に射影。
-	// 絶対値で歩き/走りの強度差を意図的に演出。
-	const FVector PlayerToOccupantDir = (OccupantLoc - PlayerLoc).GetSafeNormal();
-	const float TowardSpeed = FVector::DotProduct(PlayerVelocity, PlayerToOccupantDir);
+    // [2] Side direction perpendicular to player travel.
+    // Correct right vector (UE: Right = Up × Forward).
+    // UEは Up × Forward = Right。
+    const FVector SideDir = FVector::CrossProduct(FVector::UpVector, PlayerDirFlat);
 
-	// Backward offset along player's travel direction, scaled by projected speed.
-	// プレイヤー進行方向への後方オフセット、射影速度に比例。
-	const FVector BackwardOffset = PlayerDirFlat * TowardSpeed * YieldBackwardFactor;
+    // [3] Backward component: project player velocity onto player→occupant direction.
+    // Absolute scalar (not normalized) → walking vs running produces visible intensity difference.
+    // プレイヤー速度をプレイヤー→occupant方向に射影。
+    // 絶対値で歩き/走りの強度差を意図的に演出。
+    const FVector PlayerToOccupantDir = (OccupantLoc - PlayerLoc).GetSafeNormal();
+    const float TowardSpeed = FVector::DotProduct(PlayerVelocity, PlayerToOccupantDir);
+    const FVector BackwardOffset = PlayerDirFlat * TowardSpeed * YieldBackwardFactor;
 
-	const FVector CandidateRight = OccupantLoc + SideDir * YieldSideDistance + BackwardOffset;
-	const FVector CandidateLeft  = OccupantLoc - SideDir * YieldSideDistance + BackwardOffset;
-	
-	
-	
-	// [4] Choose the side that moves AWAY from player's path (not toward slot).
-	// Early version preferred "closer to slot" for cheap recovery, but in playtest that
-	// caused occupants to cross player's path when their slot was on the far side.
-	// Player avoidance is the intent; slot return cost is secondary.
-	// プレイヤー経路から「離れる」側を優先（元はスロット復帰コスト優先だったが、
-	// スロットがプレイヤー反対側にある場合に経路を横切る副作用が判明したため変更）。
-	const FVector PlayerToOccupant = OccupantLoc - Player->GetActorLocation();
-	const float SideSign = FVector::DotProduct(PlayerToOccupant, SideDir);
+    const FVector CandidateRight = OccupantLoc + SideDir * YieldSideDistance + BackwardOffset;
+    const FVector CandidateLeft  = OccupantLoc - SideDir * YieldSideDistance + BackwardOffset;
 
-	const FVector FirstChoice  = (SideSign >= 0) ? CandidateRight : CandidateLeft;
-	const FVector SecondChoice = (SideSign >= 0) ? CandidateLeft  : CandidateRight;
+    // [4] Choose the side that moves AWAY from player's path (not toward slot).
+    // Early version preferred "closer to slot" for cheap recovery, but in playtest that
+    // caused occupants to cross player's path when their slot was on the far side.
+    // Player avoidance is the intent; slot return cost is secondary.
+    // プレイヤー経路から「離れる」側を優先（元はスロット復帰コスト優先だったが、
+    // スロットがプレイヤー反対側にある場合に経路を横切る副作用が判明したため変更）。
+    const FVector PlayerToOccupant = OccupantLoc - PlayerLoc;
+    const float SideSign = FVector::DotProduct(PlayerToOccupant, SideDir);
 
-	// Debug: candidates visualized as red/blue spheres.
-	// デバッグ：候補を赤青球で可視化。
-	DrawDebugSphere(GetWorld(), CandidateRight, 20.f, 8, FColor::Red,  false, 0.5f);
-	DrawDebugSphere(GetWorld(), CandidateLeft,  20.f, 8, FColor::Blue, false, 0.5f);
+    const FVector FirstChoice  = (SideSign >= 0) ? CandidateRight : CandidateLeft;
+    const FVector SecondChoice = (SideSign >= 0) ? CandidateLeft  : CandidateRight;
 
-	// [5] NavMesh validation (yield where reachable; give up if not).
-	// Honest fallback: "no space to yield" → keep Following.
-	// NavMesh検証。退避不可なら正直にFollowing維持。
-	if (TryProjectToNavMesh(FirstChoice,  OutLocation)) return true;
-	if (TryProjectToNavMesh(SecondChoice, OutLocation)) return true;
-
-	return false;
+    // [5] NavMesh validation (yield where reachable; give up if not).
+    // Debug spheres show the chosen candidate (red = first, blue = second).
+    // NavMesh検証。退避不可ならfalse。赤=第1候補、青=第2候補。
+    if (TryProjectToNavMesh(FirstChoice, OutLocation))
+    {
+        DrawDebugSphere(GetWorld(), OutLocation, 20.f, 8, FColor::Red, false, 1.0f);
+        return true;
+    }
+    if (TryProjectToNavMesh(SecondChoice, OutLocation))
+    {
+        DrawDebugSphere(GetWorld(), OutLocation, 20.f, 8, FColor::Blue, false, 1.0f);
+        return true;
+    }
+    return false;
 }
 
 void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 {
-    const int32 N = SlotAssignment.Num();
+	const int32 N = SlotAssignment.Num();
 
-    // Sync state arrays with slot count.
-    // 状態配列のスロット数同期。
-    if (SlotYieldStates.Num() != N)
-    {
-        SlotYieldStates.Init(ESlotYieldState::Following, N);
-    }
-    if (CachedYieldLocations.Num() != N)
-    {
-        CachedYieldLocations.Init(FVector::ZeroVector, N);
-    }
-    if (SlotYieldDelayTimers.Num() != N)
-    {
-        SlotYieldDelayTimers.Init(0.f, N);
-    }
+	// Sync state arrays with slot count.
+	// 状態配列のスロット数同期。
+	if (SlotYieldStates.Num() != N)
+	{
+		SlotYieldStates.Init(ESlotYieldState::Following, N);
+	}
+	if (CachedYieldLocations.Num() != N)
+	{
+		CachedYieldLocations.Init(FVector::ZeroVector, N);
+	}
+	if (SlotYieldDelayTimers.Num() != N)
+	{
+		SlotYieldDelayTimers.Init(0.f, N);
+	}
 
-    // Per-slot state machine with entry delay.
-    // 進入遅延付きスロット別ステートマシン。
-    for (int32 SlotIdx = 0; SlotIdx < N; ++SlotIdx)
-    {
-        switch (SlotYieldStates[SlotIdx])
-        {
-        case ESlotYieldState::Following:
-            if (ShouldYieldForSlot(SlotIdx))
-            {
-                // Accumulate delay while condition holds.
-                // 条件成立中はタイマー累積。
-                SlotYieldDelayTimers[SlotIdx] += DeltaTime;
+	// Per-slot state machine with entry delay.
+	// 進入遅延付きスロット別ステートマシン。
+	for (int32 SlotIdx = 0; SlotIdx < N; ++SlotIdx)
+	{
+		switch (SlotYieldStates[SlotIdx])
+		{
+		case ESlotYieldState::Following:
+			if (ShouldYieldForSlot(SlotIdx))
+			{
+				// Accumulate delay while condition holds.
+				// 条件成立中はタイマー累積。
+				SlotYieldDelayTimers[SlotIdx] += DeltaTime;
 
-                if (SlotYieldDelayTimers[SlotIdx] >= YieldEntryDelay)
-                {
-                    // Delay elapsed → re-evaluate by computing yield location.
-                    // 遅延終了 → Yield座標算出による再評価。
-                    FVector YieldLoc;
-                    if (TryCalculateYieldLocationForSlot(SlotIdx, YieldLoc))
-                    {
-                        CachedYieldLocations[SlotIdx] = YieldLoc;
-                        SlotYieldStates[SlotIdx] = ESlotYieldState::Yielding;
-                    }
-                    // Reset timer regardless of result (re-try from scratch if calc failed).
-                    // 算出失敗時もタイマーリセット（次のチャンスを最初から）。
-                    SlotYieldDelayTimers[SlotIdx] = 0.f;
-                }
-            }
-            else
-            {
-                // Condition broken → reset timer.
-                // 条件不成立 → タイマーリセット。
-                SlotYieldDelayTimers[SlotIdx] = 0.f;
-            }
-            break;
+				if (SlotYieldDelayTimers[SlotIdx] >= YieldEntryDelay)
+				{
+					// Delay elapsed → re-evaluate by computing yield location.
+					// 遅延終了 → Yield座標算出による再評価。
+					FVector YieldLoc;
+					if (TryCalculateYieldLocationForSlot(SlotIdx, YieldLoc))
+					{
+						CachedYieldLocations[SlotIdx] = YieldLoc;
+						SlotYieldStates[SlotIdx] = ESlotYieldState::Yielding;
+						UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d ENTER Yielding at %s"),
+							SlotIdx, *YieldLoc.ToString());
+					}
+					// Reset timer regardless of result (re-try from scratch if calc failed).
+					// 算出失敗時もタイマーリセット（次のチャンスを最初から）。
+					SlotYieldDelayTimers[SlotIdx] = 0.f;
+				}
+			}
+			else
+			{
+				// Condition broken → reset timer.
+				// 条件不成立 → タイマーリセット。
+				SlotYieldDelayTimers[SlotIdx] = 0.f;
+			}
+			break;
 
-        case ESlotYieldState::Yielding:
-            if (ShouldExitYieldForSlot(SlotIdx))
-            {
-                SlotYieldStates[SlotIdx] = ESlotYieldState::Following;
-                // Next Component Tick pushes slot coordinate → natural return.
-                // 次のComponent Tickでスロット座標が自動push、自然復帰。
-            }
-            break;
-        }
-    }
+		case ESlotYieldState::Yielding:
+			if (ShouldExitYieldForSlot(SlotIdx))
+			{
+				SlotYieldStates[SlotIdx] = ESlotYieldState::Following;
+				// Next Component Tick pushes slot coordinate → natural return.
+				// 次のComponent Tickでスロット座標が自動push、自然復帰。
+				UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d EXIT Yielding -> Following"), SlotIdx);
+			}
+			break;
+		}
+	}
 }
