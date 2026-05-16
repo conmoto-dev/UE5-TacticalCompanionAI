@@ -637,8 +637,6 @@ bool UFormationFollowComponent::ShouldYieldForSlot(int32 SlotIdx) const
 
 	const APawn* Player = GetPlayerPawn();
 	if (!Player) return false;
-	
-	const FVector PlayerVelocity = Player->GetVelocity();
 
 	// [1] Distance check (3D; height-distant occupants get filtered here).
 	// 距離チェック（3D）。高低差のあるoccupantはここでフィルタ。
@@ -647,12 +645,15 @@ bool UFormationFollowComponent::ShouldYieldForSlot(int32 SlotIdx) const
 	const FVector PlayerToOccupant = OccupantLoc - PlayerLoc;
 	if (PlayerToOccupant.SizeSquared() > FMath::Square(YieldEnterRadius)) return false;
 
-	// [2] Cone check on horizontal plane.
-	// Z is ignored: same-corridor path blocking is a horizontal problem.
-	// Distance check above acts as the implicit vertical filter.
-	// コーンは水平面で判定。Z無視。垂直方向は距離チェックが暗黙のフィルタとして機能。
-	const FVector PlayerDirFlat   = FVector(PlayerVelocity.X,    PlayerVelocity.Y,    0.f).GetSafeNormal();
-	const FVector ToOccupantFlat  = FVector(PlayerToOccupant.X,  PlayerToOccupant.Y,  0.f).GetSafeNormal();
+	// [2] Cone check on horizontal plane based on player's facing (not velocity).
+	// Facing-based: stationary player can still trigger Yield by looking at occupant.
+	// Camera direction is decoupled from character facing in this game, so only the
+	// character's body orientation matters here.
+	// プレイヤーの正面方向（移動ではなく向き）でcone判定。
+	// 停止中でも向きが合えば発動。カメラ方向は別軸なので使わない。
+	const FVector PlayerForward   = Player->GetActorForwardVector();
+	const FVector PlayerDirFlat   = FVector(PlayerForward.X,   PlayerForward.Y,   0.f).GetSafeNormal();
+	const FVector ToOccupantFlat  = FVector(PlayerToOccupant.X, PlayerToOccupant.Y, 0.f).GetSafeNormal();
 
 	// Compare cosines instead of angles to avoid acos() cost.
 	// acos回避のためコサイン値で比較。
