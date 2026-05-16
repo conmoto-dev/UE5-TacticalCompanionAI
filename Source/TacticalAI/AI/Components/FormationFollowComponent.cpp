@@ -637,20 +637,17 @@ bool UFormationFollowComponent::ShouldYieldForSlot(int32 SlotIdx) const
 
 	const APawn* Player = GetPlayerPawn();
 	if (!Player) return false;
-
-	// [1] Player speed check (stationary player won't block anything).
-	// プレイヤーが停止中なら道を塞ぐ概念がないので無効。
+	
 	const FVector PlayerVelocity = Player->GetVelocity();
-	if (PlayerVelocity.SizeSquared() < FMath::Square(PlayerMovingSpeedThreshold)) return false;
 
-	// [2] Distance check (3D; height-distant occupants get filtered here).
+	// [1] Distance check (3D; height-distant occupants get filtered here).
 	// 距離チェック（3D）。高低差のあるoccupantはここでフィルタ。
 	const FVector OccupantLoc = Occupant->GetActorLocation();
 	const FVector PlayerLoc = Player->GetActorLocation();
 	const FVector PlayerToOccupant = OccupantLoc - PlayerLoc;
 	if (PlayerToOccupant.SizeSquared() > FMath::Square(YieldEnterRadius)) return false;
 
-	// [3] Cone check on horizontal plane.
+	// [2] Cone check on horizontal plane.
 	// Z is ignored: same-corridor path blocking is a horizontal problem.
 	// Distance check above acts as the implicit vertical filter.
 	// コーンは水平面で判定。Z無視。垂直方向は距離チェックが暗黙のフィルタとして機能。

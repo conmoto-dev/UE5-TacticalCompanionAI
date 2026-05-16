@@ -245,11 +245,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "180.0"))
 	float YieldConeHalfAngleDeg = 50.f;
 
-	// Player velocity below this is treated as "stopped" → cone disabled.
-	// この速度未満は停止扱い、コーン無効。
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
-	float PlayerMovingSpeedThreshold = 10.f;
-
 	// ───── Geometry Parameters ─────
 
 	// Side-step distance from occupant's current position.
