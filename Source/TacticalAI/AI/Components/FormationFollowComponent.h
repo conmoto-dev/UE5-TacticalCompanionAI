@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "AI/Strategies/YieldContextProvider.h"
 #include "FormationFollowComponent.generated.h"
 
 class UFormationDataAsset;
@@ -23,7 +24,7 @@ enum class ESlotYieldState : uint8
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class TACTICALAI_API UFormationFollowComponent : public UActorComponent
+class TACTICALAI_API UFormationFollowComponent : public UActorComponent, public IYieldContextProvider
 {
 	GENERATED_BODY()
 
@@ -229,28 +230,13 @@ public:
 	// - 状態はスロット単位、キャラ単位ではない（1スロットのYieldが他に影響しない）。
 	// - キャラクターは受動：座標を受け取るだけで決定はしない。
 	// =========================================================================
-#if WITH_EDITOR
-	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-#endif
-protected:
-	// ───── Detection Parameters ─────
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0"))
-	float YieldEnterRadius = 500.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (
-	ClampMin = "0.0",
-	ToolTip = "Must be greater than or equal to YieldEnterRadius (auto-corrected if not). Forms hysteresis to prevent immediate re-exit after Yielding entry."))
-	float YieldExitRadius = 700.f;
+	// ───── IYieldContextProvider implementation ─────
 
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "180.0"))
-	float YieldConeHalfAngleDeg = 50.f;
-
-	// ───── Geometry Parameters ─────
-
-	// Side-step distance from occupant's current position.
-	// occupant現在位置から横方向に退避する距離。
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Geometry", meta = (ClampMin = "0.0"))
-	float YieldSideDistance = 200.f;
+	virtual int32 GetSlotCount() const override;
+	virtual APartyCharacter* GetOccupantAt(int32 SlotIdx) const override;
+	virtual FVector GetSlotLocationAt(int32 SlotIdx) const override;
+	virtual APawn* GetTargetPawn() const override;
 
 private:
 	// ───── State (per slot, parallel to SlotAssignment) ─────
@@ -265,35 +251,17 @@ private:
 
 	// ───── Logic ─────
 
-	bool ShouldYieldForSlot(int32 SlotIdx) const;
-	bool ShouldExitYieldForSlot(int32 SlotIdx) const;
-
-	/** Computes yield target with NavMesh validation. Returns false if no valid spot. */
-	/** Yield目標を算出（NavMesh検証含む）。退避不可ならfalse。 */
-	bool TryCalculateYieldLocationForSlot(int32 SlotIdx, FVector& OutLocation) const;
-
 	/** Per-tick state machine update for all slots. */
 	/** 全スロットのステートマシン更新。 */
 	void UpdateYieldStates(float DeltaTime);
 
 	APawn* GetPlayerPawn() const;
-
-	// Reaction time delay before triggering Yield. Mimics human perception-action
-	// delay so 3 occupants entering the cone don't all yield to the same direction
-	// simultaneously (the main cause of deadlock).
-	// Reaction Timeモデルでcone進入から発動までの遅延。
-	// 同時反応の不自然さとデッドロックを軽減。
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Detection", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float YieldEntryDelay = 0.2f;
 	
 	/** Per-slot delay timer. Accumulates while ShouldYield is true; reset on condition break.
 	When >= YieldEntryDelay, re-evaluate and transition to Yielding. */
 	/** スロット別の遅延タイマー。ShouldYield成立中累積、不成立でリセット。
 		YieldEntryDelay到達時に再評価しYieldingへ遷移。 */
 	TArray<float> SlotYieldDelayTimers;
-	
-	UPROPERTY(EditDefaultsOnly, Category = "Formation|Yield|Geometry", meta = (ClampMin = "0.0"))
-	float YieldBackwardFactor = 0.25f;
 	
 	// Per-slot last-calculated location for distance-from-player based caching.
 	// Used by the new (per-slot) cache trigger; replaces single LastCalculatedLocation.
@@ -304,7 +272,7 @@ private:
 	// at least this far from its last cached position.
 	// プレイヤーがスロットからこの距離以上離れた時のみ再算出。
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Cache", meta = (ClampMin = "0.0"))
-	float SlotCacheUpdateDistance = 500.f;
+	float SlotCacheUpdateDistance = 300.f;
 	
 	// =========================================================================
 	// Debug

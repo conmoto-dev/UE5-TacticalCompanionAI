@@ -12,6 +12,7 @@
 #include "Data/FormationDataAsset.h"
 #include "Algorithms/HungarianMatchingLibrary.h"
 #include "Algo/Reverse.h"
+#include "AI/Strategies/YieldStrategy.h"
 #include "EngineUtils.h"
 
 UFormationFollowComponent::UFormationFollowComponent()
@@ -22,13 +23,6 @@ UFormationFollowComponent::UFormationFollowComponent()
 void UFormationFollowComponent::BeginPlay()
 {
 	Super::BeginPlay();
-
-	if (YieldExitRadius < YieldEnterRadius)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Yield] YieldExitRadius (%.0f) < YieldEnterRadius (%.0f) at BeginPlay. Auto-corrected."),
-			YieldExitRadius, YieldEnterRadius);
-		YieldExitRadius = YieldEnterRadius;
-	}
 	
 	// Default to WideFormation if CurrentFormation wasn't assigned in editor.
 	// エディタ未割当時はWideFormationにフォールバック。
@@ -526,8 +520,12 @@ void UFormationFollowComponent::HandleStopMatching(float DeltaTime, AActor* Curr
 		CurrentStopDuration += DeltaTime;
 		if (CurrentStopDuration > StopDurationToTrigger && !bMatchingAppliedOnStop)
 		{
-			ApplyHungarianMatching();
-			bMatchingAppliedOnStop = true;
+			const bool bHasYieldingSlot = SlotYieldStates.Contains(ESlotYieldState::Yielding);
+			if (!bHasYieldingSlot)
+			{
+				ApplyHungarianMatching();
+				bMatchingAppliedOnStop = true;
+			}
 		}
 	}
 	else
@@ -598,27 +596,6 @@ static FAutoConsoleCommandWithWorld GShuffleSlotsCommand(
 	})
 );
 
-// =========================================================================
-// Yield Behavior implementation
-// =========================================================================
-
-#if WITH_EDITOR
-void UFormationFollowComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
-{
-	Super::PostEditChangeProperty(PropertyChangedEvent);
-
-	// Yield hysteresis requires Exit >= Enter to prevent immediate re-exit
-	// after Yielding entry. Enforce automatically in editor.
-	// Yield ヒステリシス: Enter直後の即時Exit防止のためExit >= Enter強制。
-	if (YieldExitRadius < YieldEnterRadius)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[Yield] YieldExitRadius (%.0f) < YieldEnterRadius (%.0f). Auto-corrected to %.0f."),
-			YieldExitRadius, YieldEnterRadius, YieldEnterRadius);
-		YieldExitRadius = YieldEnterRadius;
-	}
-}
-#endif
-
 APawn* UFormationFollowComponent::GetPlayerPawn() const
 {
 	if (const UWorld* World = GetWorld())
@@ -628,131 +605,41 @@ APawn* UFormationFollowComponent::GetPlayerPawn() const
 	return nullptr;
 }
 
-bool UFormationFollowComponent::ShouldYieldForSlot(int32 SlotIdx) const
+// =========================================================================
+// IYieldContextProvider implementation
+// =========================================================================
+
+int32 UFormationFollowComponent::GetSlotCount() const
 {
-	if (!SlotAssignment.IsValidIndex(SlotIdx)) return false;
-
-	APartyCharacter* Occupant = SlotAssignment[SlotIdx];
-	if (!Occupant) return false;
-
-	const APawn* Player = GetPlayerPawn();
-	if (!Player) return false;
-
-	// [1] Distance check (3D; height-distant occupants get filtered here).
-	// 距離チェック（3D）。高低差のあるoccupantはここでフィルタ。
-	const FVector OccupantLoc = Occupant->GetActorLocation();
-	const FVector PlayerLoc = Player->GetActorLocation();
-	const FVector PlayerToOccupant = OccupantLoc - PlayerLoc;
-	if (PlayerToOccupant.SizeSquared() > FMath::Square(YieldEnterRadius)) return false;
-
-	// [2] Cone check on horizontal plane based on player's facing (not velocity).
-	// Facing-based: stationary player can still trigger Yield by looking at occupant.
-	// Camera direction is decoupled from character facing in this game, so only the
-	// character's body orientation matters here.
-	// プレイヤーの正面方向（移動ではなく向き）でcone判定。
-	// 停止中でも向きが合えば発動。カメラ方向は別軸なので使わない。
-	const FVector PlayerForward   = Player->GetActorForwardVector();
-	const FVector PlayerDirFlat   = FVector(PlayerForward.X,   PlayerForward.Y,   0.f).GetSafeNormal();
-	const FVector ToOccupantFlat  = FVector(PlayerToOccupant.X, PlayerToOccupant.Y, 0.f).GetSafeNormal();
-
-	// Compare cosines instead of angles to avoid acos() cost.
-	// acos回避のためコサイン値で比較。
-	const float CosAngle = FVector::DotProduct(PlayerDirFlat, ToOccupantFlat);
-	const float CosThreshold = FMath::Cos(FMath::DegreesToRadians(YieldConeHalfAngleDeg));
-
-	return CosAngle >= CosThreshold;
+	return SlotAssignment.Num();
 }
 
-bool UFormationFollowComponent::ShouldExitYieldForSlot(int32 SlotIdx) const
+APartyCharacter* UFormationFollowComponent::GetOccupantAt(int32 SlotIdx) const
 {
-	// Exit defaults to TRUE on missing data (recover to Following safely).
-	// データ欠損時はTRUE（安全にFollowingへ復帰）。
-	if (!SlotAssignment.IsValidIndex(SlotIdx)) return true;
-
-	APartyCharacter* Occupant = SlotAssignment[SlotIdx];
-	if (!Occupant) return true;
-
-	const APawn* Player = GetPlayerPawn();
-	if (!Player) return true;
-
-	// Distance-only check (no cone). Asymmetric with Enter is the intended hysteresis:
-	// stationary player nearby keeps occupant yielding (avoids re-blocking).
-	// 距離のみ（コーン無し）。Enterとの非対称性が意図的なヒステリシス：
-	// 近くで停止したプレイヤーの場合、Yielding維持で再ブロックを防ぐ。
-	const FVector PlayerToOccupant = Occupant->GetActorLocation() - Player->GetActorLocation();
-	return PlayerToOccupant.SizeSquared() > FMath::Square(YieldExitRadius);
+	if (!SlotAssignment.IsValidIndex(SlotIdx)) return nullptr;
+	return SlotAssignment[SlotIdx];
 }
 
-bool UFormationFollowComponent::TryCalculateYieldLocationForSlot(int32 SlotIdx, FVector& OutLocation) const
+FVector UFormationFollowComponent::GetSlotLocationAt(int32 SlotIdx) const
 {
-    if (!SlotAssignment.IsValidIndex(SlotIdx)) return false;
-    if (!CachedSlotLocations.IsValidIndex(SlotIdx)) return false;
+	if (!CachedSlotLocations.IsValidIndex(SlotIdx)) return FVector::ZeroVector;
+	return CachedSlotLocations[SlotIdx];
+}
 
-    APartyCharacter* Occupant = SlotAssignment[SlotIdx];
-    if (!Occupant) return false;
-
-    const APawn* Player = GetPlayerPawn();
-    if (!Player) return false;
-
-    // [1] Player travel direction (horizontal only).
-    // Player speed already validated in ShouldYieldForSlot; PlayerDirFlat won't be zero here.
-    // プレイヤー進行方向（水平のみ）。速度検証済みのためここではzero不可。
-    const FVector PlayerVelocity = Player->GetVelocity();
-    const FVector PlayerDirFlat = FVector(PlayerVelocity.X, PlayerVelocity.Y, 0.f).GetSafeNormal();
-
-    const FVector OccupantLoc = Occupant->GetActorLocation();
-    const FVector PlayerLoc = Player->GetActorLocation();
-
-    // [2] Side direction perpendicular to player travel.
-    // Correct right vector (UE: Right = Up × Forward).
-    // UEは Up × Forward = Right。
-    const FVector SideDir = FVector::CrossProduct(FVector::UpVector, PlayerDirFlat);
-
-    // [3] Backward component: project player velocity onto player→occupant direction.
-    // Absolute scalar (not normalized) → walking vs running produces visible intensity difference.
-    // プレイヤー速度をプレイヤー→occupant方向に射影。
-    // 絶対値で歩き/走りの強度差を意図的に演出。
-    const FVector PlayerToOccupantDir = (OccupantLoc - PlayerLoc).GetSafeNormal();
-    const float TowardSpeed = FVector::DotProduct(PlayerVelocity, PlayerToOccupantDir);
-    const FVector BackwardOffset = PlayerDirFlat * TowardSpeed * YieldBackwardFactor;
-
-    const FVector CandidateRight = OccupantLoc + SideDir * YieldSideDistance + BackwardOffset;
-    const FVector CandidateLeft  = OccupantLoc - SideDir * YieldSideDistance + BackwardOffset;
-
-    // [4] Choose the side that moves AWAY from player's path (not toward slot).
-    // Early version preferred "closer to slot" for cheap recovery, but in playtest that
-    // caused occupants to cross player's path when their slot was on the far side.
-    // Player avoidance is the intent; slot return cost is secondary.
-    // プレイヤー経路から「離れる」側を優先（元はスロット復帰コスト優先だったが、
-    // スロットがプレイヤー反対側にある場合に経路を横切る副作用が判明したため変更）。
-    const FVector PlayerToOccupant = OccupantLoc - PlayerLoc;
-    const float SideSign = FVector::DotProduct(PlayerToOccupant, SideDir);
-
-    const FVector FirstChoice  = (SideSign >= 0) ? CandidateRight : CandidateLeft;
-    const FVector SecondChoice = (SideSign >= 0) ? CandidateLeft  : CandidateRight;
-
-    // [5] NavMesh validation (yield where reachable; give up if not).
-    // Debug spheres show the chosen candidate (red = first, blue = second).
-    // NavMesh検証。退避不可ならfalse。赤=第1候補、青=第2候補。
-    if (TryProjectToNavMesh(FirstChoice, OutLocation))
-    {
-        DrawDebugSphere(GetWorld(), OutLocation, 20.f, 8, FColor::Red, false, 1.0f);
-        return true;
-    }
-    if (TryProjectToNavMesh(SecondChoice, OutLocation))
-    {
-        DrawDebugSphere(GetWorld(), OutLocation, 20.f, 8, FColor::Blue, false, 1.0f);
-        return true;
-    }
-    return false;
+APawn* UFormationFollowComponent::GetTargetPawn() const
+{
+	// Currently always the player. Future: could pick different target per context
+	// (e.g., enemy aggressor in battle).
+	// 現在は常にプレイヤー。将来的にコンテキスト別ターゲット選択可能。
+	return GetPlayerPawn();
 }
 
 void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 {
 	const int32 N = SlotAssignment.Num();
 
-	// Sync state arrays with slot count.
-	// 状態配列のスロット数同期。
+	// State arrays sync (unchanged).
+	// 状態配列の同期（変更なし）。
 	if (SlotYieldStates.Num() != N)
 	{
 		SlotYieldStates.Init(ESlotYieldState::Following, N);
@@ -765,51 +652,49 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 	{
 		SlotYieldDelayTimers.Init(0.f, N);
 	}
+	
+	// No formation or no strategy → skip yield logic entirely.
+	// Formationまたは Strategy 未設定 → Yield処理スキップ。
+	if (!CurrentFormation || !CurrentFormation->YieldStrategy) return;
+	
+	UYieldStrategy* Strategy = CurrentFormation->YieldStrategy;
+	const TScriptInterface<IYieldContextProvider> Context = this;
 
-	// Per-slot state machine with entry delay.
-	// 進入遅延付きスロット別ステートマシン。
 	for (int32 SlotIdx = 0; SlotIdx < N; ++SlotIdx)
 	{
 		switch (SlotYieldStates[SlotIdx])
 		{
 		case ESlotYieldState::Following:
-			if (ShouldYieldForSlot(SlotIdx))
+			if (Strategy->ShouldYieldForSlot(Context, SlotIdx))
 			{
 				// Accumulate delay while condition holds.
 				// 条件成立中はタイマー累積。
 				SlotYieldDelayTimers[SlotIdx] += DeltaTime;
-
-				if (SlotYieldDelayTimers[SlotIdx] >= YieldEntryDelay)
+				if (SlotYieldDelayTimers[SlotIdx] >= Strategy->GetEntryDelay())
 				{
 					// Delay elapsed → re-evaluate by computing yield location.
 					// 遅延終了 → Yield座標算出による再評価。
 					FVector YieldLoc;
-					if (TryCalculateYieldLocationForSlot(SlotIdx, YieldLoc))
+					if (Strategy->TryCalculateYieldLocationForSlot(Context, SlotIdx, YieldLoc))
 					{
 						CachedYieldLocations[SlotIdx] = YieldLoc;
 						SlotYieldStates[SlotIdx] = ESlotYieldState::Yielding;
 						UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d ENTER Yielding at %s"),
 							SlotIdx, *YieldLoc.ToString());
 					}
-					// Reset timer regardless of result (re-try from scratch if calc failed).
-					// 算出失敗時もタイマーリセット（次のチャンスを最初から）。
 					SlotYieldDelayTimers[SlotIdx] = 0.f;
 				}
 			}
 			else
 			{
-				// Condition broken → reset timer.
-				// 条件不成立 → タイマーリセット。
 				SlotYieldDelayTimers[SlotIdx] = 0.f;
 			}
 			break;
 
 		case ESlotYieldState::Yielding:
-			if (ShouldExitYieldForSlot(SlotIdx))
+			if (Strategy->ShouldExitYieldForSlot(Context, SlotIdx))
 			{
 				SlotYieldStates[SlotIdx] = ESlotYieldState::Following;
-				// Next Component Tick pushes slot coordinate → natural return.
-				// 次のComponent Tickでスロット座標が自動push、自然復帰。
 				UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d EXIT Yielding -> Following"), SlotIdx);
 			}
 			break;

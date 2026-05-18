@@ -6,6 +6,8 @@
 #include "Engine/DataAsset.h"
 #include "FormationDataAsset.generated.h"
 
+class UYieldStrategy;
+
 /**
  * Single slot definition within a formation.
  * Wrapped in a struct (instead of bare FVector) so we can extend with priority,
@@ -41,4 +43,11 @@ public:
 	/** All slot definitions for this formation. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Formation")
 	TArray<FFormationSlotData> Slots;
+	
+	/** Yield strategy for this formation. Pick Standard / None / etc.
+ *  Per-formation override of yield behavior. */
+	/** この隊形のYield戦略。Standard / None等から選択。
+	 *  隊形毎にYield動作を切替可能。 */
+	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly, Category = "Yield")
+	TObjectPtr<UYieldStrategy> YieldStrategy;
 };

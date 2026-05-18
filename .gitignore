@@ -21,3 +21,6 @@ Saved/
 .DS_Store
 Thumbs.db
 EOF
+
+*.DotSettings.user
+*.DotSettings
