@@ -17,7 +17,9 @@
 - **環境認識のスロット補正** — 傾斜面Z補正、NavMesh第一検証、壁スライディングはフォールバック
 - **バネベースのギャップスケーリング** (`FloatSpringInterp`) — リーダー速度連動の隊形伸縮
 - **Quaternion遅延回転** — 仲間が回転に重く追従、機械的スナップを回避
-- **距離 + 回転認識のキャッシュ無効化** — 必要な時のみ重いクエリを実行
+- **スロット別距離ベースのキャッシュ無効化** — プレイヤーが離れた時のみスロット位置を再算出。通過中にスロットがプレイヤーを「追う」現象を防ぐ
+- **隊形別Yield Strategy** — 抽象`UYieldStrategy`に具象`_Standard` (コーン + 横退避 + 速度射影) / `_None`を持つ。`Instanced` UPROPERTYで隊形毎にデザイナーが選択。`IYieldContextProvider`によりComponent型から分離
+- **持続停止時のHungarianによるスロット再割り当て** — O(N³)の最適マッチング。Yielding中はスキップして退避先のスワップを防止
 
 ---
 
@@ -39,12 +41,38 @@ Line Traceは厚みが0であるため、キャラクターのカプセルが実
 
 環境ベースのV/I切り替えは「平時モードの内部決定」なので、`FormationFollowComponent`内で完結させます。将来戦闘モードが導入される時、`APartyManager`は同じ決定を取り合うのではなく、アクティブなコンポーネント自体を差し替える役割になります。抽象化レベルを重ならせないことで、既存のコンポーネントを触らずに新しいモードを追加できる構造を確保しています。
 
+### なぜYieldは隊形単位のシステムで、キャラクター単位ではないのか
+
+より寛容な設計として、各キャラクターに独自のYieldロジックを持たせる方法もあります — 各自が近接アクターを判定して個別に退避する。これなら、パーティ・隊形・陣営に関わらず任意の2キャラ間でYieldが成立します。
+
+しかしこの設計は採用しませんでした。キャラクター単位のYieldはN×Mの近接判定でスケールが悪く、より深刻なのは*共有コンテキストの欠如*です。同じプレイヤーに対して退避する仲間同士が同じ退避位置に集まったり、同一隊形内のキャラ同士が互いにYieldして隊形が崩壊したりします。デッドロックの検出も、「全員が違う方向に避ける」協調も、中央で行う場所がありません。
+
+Yieldを`FormationFollowComponent`に置くことで、この能力と引き換えに明確な制約を受け入れています: **異なる隊形に属するキャラクター同士はYieldできない**。仲間は、コンポーネントが管理する隊形に属さない無関係なNPCには道を譲りません。
+
+このトレードオフは意図的なものです。『グランブルーファンタジー リリンク』や『アークナイツ: エンドフィールド』でも、Yieldするのはプレイヤーのパーティのみ — 敵は立ち止まるか前進する、というジャンル的に自然な挙動です。隊形を跨ぐ回避が必要な場面は、Yieldシステムではなく別のシステム (Detour Crowd / RVO) の領分です。「何でも表現できる設計」は得てして各機能の表現力が弱くなります。*システムが何をしないか*を決めることも設計の一部です。
+
+### なぜYieldはStrategyパターンを使うのか
+
+V隊形 (広い道で横+後ろに退避) のYieldロジックと、I隊形 (狭い通路で壁に張り付き、プレイヤー通過後に隊形を反転) のYieldロジックは、同じアルゴリズムではありません。パラメータ調整で統一できる類のものではなく、構造的に別の挙動です。
+
+`UYieldStrategy`を抽象ベースクラスとし、具象クラス (`_Standard`、`_None`、将来の`_Narrow`) が個別のアルゴリズムを実装します。`FormationDataAsset`が`Instanced` `UPROPERTY`としてStrategyを保持するため、デザイナーは隊形ごとに使用するStrategyをドロップダウンで選び、そのStrategyのパラメータがDataAssetのディテールパネルにそのまま表示されます。新しいYieldアルゴリズムは新しいクラスとして追加され、既存コードには触れません。
+
+`IYieldContextProvider`がStrategyを具象Componentから分離します。Componentがインターフェースを実装してContextとして自身を渡し、Strategyは`UFormationFollowComponent`という名前を一切知りません。将来`BattleFormationComponent`や`EnemyGroupComponent`が追加されても、新Componentが同じインターフェースを実装していれば、既存のStrategyはそのまま動作します。
+
+### なぜスロット別の状態はComponent側に置くのか
+
+Unrealの`DataAsset`はFlyweightパターンに従います: 複数のComponentが同じAssetを参照すると、メモリ上のインスタンスは1つで、`Instanced`メンバ (Strategy含む) も共有されます。もしStrategyがスロット別状態 (Yielding状態、タイマー、退避先座標) を保持していた場合、同じ隊形Assetを参照する2つのComponentはYield状態まで共有 — つまり互いに破壊し合うことになります。
+
+そのためStrategyはステートレスに設計しました: 判断と算出のみを提供し、状態は持ちません。スロット別の状態 (`SlotYieldStates`、`SlotYieldDelayTimers`、`CachedYieldLocations`) は全てComponent側にあり、どのAssetを指していてもComponent自身のコピーを保有します。Componentがステートマシンを駆動し、Strategyはそれに対する問い合わせに答えるのみ。これにより、将来のマルチグループ展開でAsset共有が発生しても、Strategy階層を変更せずに安全性が保たれます。
+
 <details>
 <summary>その他の判断: ヒステリシス、非同期LineTraceの保留など</summary>
 
 **境界点滅防止のためのヒステリシス**: 単一の幅閾値だと境界で隊形が点滅します。`NarrowThreshold=300`と`WideThreshold=500`の二重閾値を使い、反対側の閾値を完全に越えた時のみ切替が発火するようにしています。
 
 **非同期LineTraceの保留**: 仲間3人 + 距離ベースポーリング(50cm閾値)の構成では、空間クエリのコストは無視できる水準です(60fpsで毎秒約360回)。非同期化はコールバックの複雑性とステイルデータ処理を導入する一方、測定可能な改善はありません。30エージェント超の大規模シナリオでプロファイラがボトルネックを示した時点で再検討します。
+
+**Yieldはキャラクターの向きで判定 (速度ではなく)**: コーン判定はターゲットの体の向きを使い、速度ベクトルは使いません。本ゲームではカメラ方向と体の向きが分離されており、静止中のプレイヤーが仲間に向き直っただけでもYieldが発火する必要があります。速度ベースだと「これから動こうとする」瞬間を逃します。
 
 </details>
 
@@ -84,16 +112,32 @@ StateTree (UE 5.7+) は本システムが必要としている分離を提供し
 
 - **方向性**: Detour Crowd Manager (UE5ネイティブ)による予測ベース・グループ認識回避、加えて隊形遷移時のHungarianアルゴリズムによる最適スロット再割り当て
 
+### 4. スロットキャッシュ距離閾値がV隊形に偏っている
+
+スロット別距離閾値 (`SlotCacheUpdateDistance`) は現在Component側に単一の値として置かれ、スロットがリーダーから遠いV隊形向けに調整されています。スロットがリーダーの背後一列に並ぶI隊形 (-150, -300, -450) では、閾値により近いスロットが更新されず遠いスロットだけが更新される結果、仲間が1点に集まってしまいます。
+
+- **方向性**: 閾値を`FormationDataAsset`へ移し隊形毎にチューニング可能にする。長期的には更新ポリシー自体が隊形依存となり得るため、Yieldと同様にStrategy化する可能性。
+
 ---
 
 ## 🚧 ロードマップ
 
-**次 (Week 2)**
-- 隊形切替時のHungarianアルゴリズムによる最適スロット割り当て
-- カメラ/入力を CharacterからPlayerControllerに分離 (真のPlayer/Companion分離の土台)
+**完了済み**
+- 3レイヤーアーキテクチャ、V/I隊形、NavMesh認識の環境補正、バネ補間ギャップ、Quaternion回転、V↔I自動切替
+- 持続停止時のHungarianによるスロット再割り当て
+- スロット別距離ベースのキャッシュ無効化
+- Yield Strategy分離 (`Instanced` UPROPERTYによる隊形毎アルゴリズム選択)
+- Hungarian-Yield衝突修正 (Yielding中の再割り当てスキップ)
+
+**次**
+- `SlotCacheUpdateDistance`を`FormationDataAsset`へ移行し隊形毎に調整可能化
+- Yield進行中の再評価 (現在はYielding中スロットがプレイヤー接近を再計算しない)
+- カメラ/入力を CharacterからPlayerControllerに分離 (真のPlayer/Companion分離)
 
 **それ以降**
-- **StateTreeベースの意思決定層** (Week 4) — 環境測定と隊形選択をFormationFollowComponentから上位レイヤーへ移行。複合遷移条件のサポート。戦闘/危険回避/譲歩モード統合の土台
+- **StateTreeベースの意思決定層** — 環境測定と隊形選択をFormationFollowComponentから上位レイヤーへ移行。複合遷移条件のサポート。戦闘/危険回避/譲歩モード統合の土台
+- `UYieldStrategy_Narrow` — I隊形の「通路反転」アルゴリズム (壁張り付き + 通過後の再整列)
+- `ATacticalCharacterBase`抽象化により敵/NPC集団にもStrategyを適用可能化
 - NavMeshエッジ回避 (崖からの落下防止)
 - NavLink認識ジャンプ
 - Detour Crowd Manager統合
@@ -106,9 +150,10 @@ StateTree (UE 5.7+) は本システムが必要としている分離を提供し
 
 - **エンジン**: Unreal Engine 5.7+
 - **言語**: C++ + Blueprint統合
-- **パターン**: コンポーネントベース、マネージャー駆動、Pawn-Controller分離
+- **パターン**: コンポーネントベース、マネージャー駆動、Pawn-Controller分離、UInterfaceを用いたStrategyパターン (Componentを跨いだ再利用)
 
 ## 📁 プロジェクト構造
+
 ```
 Source/TacticalAI/
 ├── (Root)              テンプレート自動生成クラス
@@ -116,7 +161,8 @@ Source/TacticalAI/
 ├── Controllers/        AI / Playerコントローラー
 ├── Party/              APartyManager
 ├── Data/               UFormationDataAsset
-└── AI/Components/      UFormationFollowComponent
+├── AI/Components/      UFormationFollowComponent
+└── AI/Strategies/      UYieldStrategy + IYieldContextProvider
 ```
 
 ---
