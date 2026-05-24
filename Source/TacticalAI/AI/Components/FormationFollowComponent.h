@@ -11,6 +11,7 @@
 class UFormationDataAsset;
 class APartyCharacter;
 class APartyManager;
+class UTacticalTraversalComponent;
 
 /**
  * Per-slot Yield state. Following = normal slot tracking, Yielding = stepped aside for player.
@@ -273,6 +274,27 @@ private:
 	// プレイヤーがスロットからこの距離以上離れた時のみ再算出。
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Cache", meta = (ClampMin = "0.0"))
 	float SlotCacheUpdateDistance = 300.f;
+	
+	// =========================================================================
+	// Traversal (Jump Integration)
+	// =========================================================================
+private:
+	// Traversal 컴포넌트 lazy 캐시. 매 틱 FindComponentByClass (N×60Hz) 회피.
+	// TWeakObjectPtr 사용 → 캐릭터 사망 시 자동 무효화.
+	UPROPERTY()
+	TMap<TObjectPtr<APartyCharacter>, TWeakObjectPtr<UTacticalTraversalComponent>> TraversalCompCache;
+
+	UTacticalTraversalComponent* GetOrCacheTraversalComp(APartyCharacter* Character);
+
+	// 점프 trigger Z 임계값. MaxStepHeight + 이 값을 넘는 단차에서만 점프 시도.
+	// (살짝 걸치는 단차에서 매번 점프 발동하는 것 방지용 여유.)
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Traversal", meta = (ClampMin = "0.0"))
+	float JumpZThresholdMargin = 15.f;
+
+	// MovingToTakeoff 중 목표 슬롯이 이 거리 이상 표류하면 abort.
+	UPROPERTY(EditDefaultsOnly, Category = "Formation|Traversal", meta = (ClampMin = "0.0"))
+	float TraversalTargetDriftThreshold = 1000.f;
+	
 	
 	// =========================================================================
 	// Debug

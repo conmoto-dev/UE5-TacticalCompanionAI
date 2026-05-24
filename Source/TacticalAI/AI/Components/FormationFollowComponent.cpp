@@ -14,6 +14,8 @@
 #include "Algo/Reverse.h"
 #include "AI/Strategies/YieldStrategy.h"
 #include "EngineUtils.h"
+#include "TacticalTraversalComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 UFormationFollowComponent::UFormationFollowComponent()
 {
@@ -86,22 +88,70 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	// ===== [6.5] Yield state evaluation (per-slot) =====
 	UpdateYieldStates(DeltaTime);
 
-	// ===== [7] Push positions to occupants (slot OR yield location based on state) =====
 	// Yielding slots get yield coordinate, others get slot coordinate.
 	// Yielding中はYield座標、それ以外はスロット座標をpush。
+	// ===== [7] Push positions to occupants (slot OR yield OR traversal-aware) =====
 	for (int32 SlotIdx = 0; SlotIdx < SlotAssignment.Num() && SlotIdx < CachedSlotLocations.Num(); ++SlotIdx)
 	{
 		APartyCharacter* Occupant = SlotAssignment[SlotIdx];
 		if (!Occupant) continue;
 
+		// 1. 현재 틱의 진짜 목표 위치 계산.
 		const bool bIsYielding = SlotYieldStates.IsValidIndex(SlotIdx)
 			&& SlotYieldStates[SlotIdx] == ESlotYieldState::Yielding;
-
 		const FVector TargetLoc = bIsYielding ? CachedYieldLocations[SlotIdx] : CachedSlotLocations[SlotIdx];
 
-		// bForceRefresh=true during Yielding bypasses UpdateThreshold caching in PartyCharacter.
-		// Yielding時はforce push: UpdateThresholdキャッシュをバイパスしMoveTo再発行を保証。
-		Occupant->UpdateTargetSlotLocation(TargetLoc, bIsYielding);
+		UTacticalTraversalComponent* TraversalComp = GetOrCacheTraversalComp(Occupant);
+
+		// 2. 디커플링: 이미 전술적 행동 중이면 간섭 정책 분기.
+		bool bForcedByAbort = false;
+		if (TraversalComp && TraversalComp->IsTraversing())
+		{
+			const ETraversalState TState = TraversalComp->GetCurrentState();
+			if (TState == ETraversalState::Airborne)
+			{
+				// 공중에선 절대 간섭 금지. OnLanded 또는 timeout 대기.
+				continue;
+			}
+			else if (TState == ETraversalState::MovingToTakeoff)
+			{
+				// 목표가 너무 멀리 표류 → abort 후 4번 분기에서 재명령.
+				const float DriftSq = FVector::DistSquared(TargetLoc, TraversalComp->GetCachedFinalTarget());
+				if (DriftSq > FMath::Square(TraversalTargetDriftThreshold))
+				{
+					TraversalComp->AbortTraversal();
+					// AbortTraversal 후 PartyCharacter::CurrentTargetLocation은 stale.
+					// 강제 push로 UpdateThreshold deduplication 우회 → 새 MoveTo 발행 보장.
+					bForcedByAbort = true;
+				}
+				else
+				{
+					continue;
+				}
+			}
+		}
+
+		// 3. 전술 이동 판단: 점프가 필요한 단차인지 검사 (Yield 중 점프 금지).
+		if (!bIsYielding && TraversalComp && !TraversalComp->IsTraversing())
+		{
+			if (UCharacterMovementComponent* MoveComp = Occupant->GetCharacterMovement())
+			{
+				const float ZDiff = TargetLoc.Z - Occupant->GetActorLocation().Z;
+				const float MaxStepHeight = MoveComp->MaxStepHeight;
+				if (ZDiff > (MaxStepHeight + JumpZThresholdMargin))
+				{
+					// RequestTacticalTraversal 내부에서 IsMovingOnGround, 거리/높이 상한,
+					// 천장 clearance, 착지지점 NavMesh 검증 다 통과해야 true.
+					if (TraversalComp->RequestTacticalTraversal(TargetLoc))
+					{
+						continue; // 점프 명령 성공 → 보행 명령 스킵.
+					}
+					// 점프 거부됨 → 4번 보행 분기로 자연스럽게 떨어짐 (NavMesh 우회 fallback).
+				}
+			}
+		}
+		// 4. 일반 이동 명령. Yield 중 또는 abort 직후엔 force refresh.
+		Occupant->UpdateTargetSlotLocation(TargetLoc, bIsYielding || bForcedByAbort);
 	}
 
 	// ===== [8] Debug visualization =====
@@ -700,4 +750,24 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 			break;
 		}
 	}
+}
+
+UTacticalTraversalComponent* UFormationFollowComponent::GetOrCacheTraversalComp(APartyCharacter* Character)
+{
+	if (!Character) return nullptr;
+
+	if (TWeakObjectPtr<UTacticalTraversalComponent>* Found = TraversalCompCache.Find(Character))
+	{
+		if (Found->IsValid())
+		{
+			return Found->Get();
+		}
+	}
+
+	UTacticalTraversalComponent* Comp = Character->FindComponentByClass<UTacticalTraversalComponent>();
+	if (Comp)
+	{
+		TraversalCompCache.Add(Character, Comp);
+	}
+	return Comp;
 }
