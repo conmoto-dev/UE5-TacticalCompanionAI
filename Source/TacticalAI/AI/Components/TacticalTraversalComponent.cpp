@@ -16,7 +16,6 @@ void UTacticalTraversalComponent::BeginPlay()
 {
     Super::BeginPlay();
 
-    // 엔진 네이티브 착지 이벤트 구독.
     if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
     {
         OwnerCharacter->LandedDelegate.AddDynamic(this, &UTacticalTraversalComponent::OnLanded);
@@ -25,7 +24,6 @@ void UTacticalTraversalComponent::BeginPlay()
 
 bool UTacticalTraversalComponent::RequestTacticalTraversal(const FVector& FinalTargetLoc)
 {
-    // 이미 다른 행동 중이거나 쿨다운(실패 페널티) 중이면 거부.
     if (CurrentState != ETraversalState::Idle || bIsOnCooldown) return false;
 
     ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
@@ -35,15 +33,55 @@ bool UTacticalTraversalComponent::RequestTacticalTraversal(const FVector& FinalT
     const FVector AgentFootLoc = OwnerChar->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
     const float Radius = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleRadius();
 
-    if (TryCalculateTakeoffPoint(AgentFootLoc, FinalTargetLoc, Radius, CachedTakeoffPoint))
+    // 1. 점프 XY 거리 클램핑 (목표가 너무 멀면 최대 사거리까지만 점프 타겟 설정)
+    FVector ToTarget = FinalTargetLoc - AgentFootLoc;
+    const float OriginalZDiff = ToTarget.Z;
+    ToTarget.Z = 0.f; // XY 평면 투영
+    
+    if (ToTarget.SizeSquared() > FMath::Square(MaxJumpReachXY))
     {
-        CachedFinalTarget = FinalTargetLoc;
-        CurrentState = ETraversalState::MovingToTakeoff;
+        ToTarget = ToTarget.GetSafeNormal() * MaxJumpReachXY;
+    }
+    
+    FVector ClampedTargetLoc = AgentFootLoc + ToTarget;
+    ClampedTargetLoc.Z = FinalTargetLoc.Z;
+
+    // 2. 가상 도약점 연산 (이전의 누락된 코드 복원!)
+    if (TryCalculateTakeoffPoint(AgentFootLoc, ClampedTargetLoc, Radius, CachedTakeoffPoint))
+    {
+        CachedFinalTarget = ClampedTargetLoc;
         TimeSpentMoving = 0.f;
 
-        if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
+        // [엣지 케이스 방어] 이미 도약점 반경 안에 들어와 있는가?
+        if (FVector::DistSquaredXY(AgentFootLoc, CachedTakeoffPoint) <= FMath::Square(TakeoffApproachRadius))
         {
-            AICon->MoveToLocation(CachedTakeoffPoint, 30.0f, true, true);
+            // MoveTo를 생략하고 즉시 Steering(조향) 상태로 직행
+            CurrentState = ETraversalState::SteeringToTakeoff;
+            SteerAlpha = 0.f;
+            CachedApproachStartPoint = AgentFootLoc;
+
+            if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
+            {
+                AICon->StopMovement();
+                FVector JumpDir = (CachedFinalTarget - CachedTakeoffPoint).GetSafeNormal2D();
+                AICon->SetFocalPoint(CachedTakeoffPoint + (JumpDir * 1000.f));
+                CachedControlPoint = CachedTakeoffPoint - (JumpDir * (TakeoffApproachRadius * 0.7f));
+            }
+            if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
+            {
+                bSavedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
+                MoveComp->bOrientRotationToMovement = false;
+                MoveComp->bUseControllerDesiredRotation = true;
+            }
+        }
+        else
+        {
+            // 거리가 멀다면 매크로 길찾기(MoveTo) 상태로 시작
+            CurrentState = ETraversalState::MovingToTakeoff;
+            if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
+            {
+                AICon->MoveToLocation(CachedTakeoffPoint, 30.0f, true, true);
+            }
         }
         return true;
     }
@@ -53,12 +91,17 @@ bool UTacticalTraversalComponent::RequestTacticalTraversal(const FVector& FinalT
 void UTacticalTraversalComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    
+    ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
+    if (!OwnerChar) return;
 
+    const float HalfHeight = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    const FVector AgentFootLoc = OwnerChar->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
+
+    // [상태 1] 길찾기로 도약점 접근 중
     if (CurrentState == ETraversalState::MovingToTakeoff)
     {
         TimeSpentMoving += DeltaTime;
-
-        // [방어] 길찾기 버그 등으로 3초 안에 못 가면 강제 취소 + 쿨다운.
         if (TimeSpentMoving > 3.0f)
         {
             AbortTraversal();
@@ -67,23 +110,58 @@ void UTacticalTraversalComponent::TickComponent(float DeltaTime, ELevelTick Tick
             return;
         }
 
-        ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
-        if (!OwnerChar) return;
+        // 도약점 반경 진입 시 조향(Steering)으로 상태 전이
+        if (FVector::DistSquaredXY(AgentFootLoc, CachedTakeoffPoint) <= FMath::Square(TakeoffApproachRadius))
+        {
+            CurrentState = ETraversalState::SteeringToTakeoff;
+            SteerAlpha = 0.f;
+            CachedApproachStartPoint = AgentFootLoc;
 
-        const float HalfHeight = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-        const FVector AgentFootLoc = OwnerChar->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
-        const float DistSq2D = FVector::DistSquaredXY(AgentFootLoc, CachedTakeoffPoint);
-        if (DistSq2D <= FMath::Square(100.0f))
+            AAIController* AICon = Cast<AAIController>(OwnerChar->GetController());
+            UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement();
+
+            if (AICon && MoveComp)
+            {
+                AICon->StopMovement();
+                FVector JumpDir = (CachedFinalTarget - CachedTakeoffPoint).GetSafeNormal2D();
+                AICon->SetFocalPoint(CachedTakeoffPoint + (JumpDir * 1000.f));
+                
+                bSavedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
+                MoveComp->bOrientRotationToMovement = false;
+                MoveComp->bUseControllerDesiredRotation = true;
+
+                CachedControlPoint = CachedTakeoffPoint - (JumpDir * (TakeoffApproachRadius * 0.7f));
+            }
+        }
+    }
+    // [상태 2] 마이크로 베지어 곡선 조향 중
+    else if (CurrentState == ETraversalState::SteeringToTakeoff)
+    {
+        SteerAlpha += (DeltaTime * SteerSpeedMultiplier);
+        SteerAlpha = FMath::Clamp(SteerAlpha, 0.f, 1.0f);
+
+        // 2차 베지어 수학 연산
+        FVector DesiredLoc = FMath::Lerp(
+            FMath::Lerp(CachedApproachStartPoint, CachedControlPoint, SteerAlpha),
+            FMath::Lerp(CachedControlPoint, CachedTakeoffPoint, SteerAlpha),
+            SteerAlpha
+        );
+
+        FVector MoveDir = (DesiredLoc - AgentFootLoc).GetSafeNormal2D();
+        OwnerChar->AddMovementInput(MoveDir, 1.0f);
+
+        DrawDebugPoint(GetWorld(), DesiredLoc + FVector(0,0,HalfHeight), 5.0f, FColor::Yellow, false, 0.5f);
+
+        if (SteerAlpha >= 1.0f || FVector::DistSquaredXY(AgentFootLoc, CachedTakeoffPoint) <= FMath::Square(30.f))
         {
             ExecuteParabolaJump();
         }
     }
+    // [상태 3] 공중 체공 중 (Airborne)
     else if (CurrentState == ETraversalState::Airborne)
     {
         TimeSpentAirborne += DeltaTime;
-
-        // [방어] 벽 끼임 등 OnLanded 미발화 케이스.
-        if (TimeSpentAirborne > 5.0f)
+        if (TimeSpentAirborne > 5.0f) // 착지 미발화 엣지 케이스 방어
         {
             AbortTraversal();
         }
@@ -101,20 +179,17 @@ bool UTacticalTraversalComponent::TryCalculateTakeoffPoint(const FVector& AgentF
     UWorld* World = GetWorld();
     if (!World) return false;
 
-    const float MaxJumpReach = 1800.0f;
-    const float MaxJumpHeight = 1700.0f;
-
     const float ZDiff = TargetLoc.Z - AgentFootLoc.Z;
-    if (FMath::Abs(ZDiff) > MaxJumpHeight) return false;
+    if (FMath::Abs(ZDiff) > MaxJumpHeightZ) return false;
 
     const FVector ProjectedTargetXY(TargetLoc.X, TargetLoc.Y, AgentFootLoc.Z);
-    if (FVector::DistSquared(AgentFootLoc, ProjectedTargetXY) > FMath::Square(MaxJumpReach)) return false;
+    if (FVector::DistSquared(AgentFootLoc, ProjectedTargetXY) > FMath::Square(MaxJumpReachXY)) return false;
 
     FVector DirectionToTarget = (ProjectedTargetXY - AgentFootLoc);
     if (DirectionToTarget.IsNearlyZero()) return false;
     DirectionToTarget.Normalize();
 
-    // [1] 도약점 물리 스윕.
+    // 1. 도약점 탐색 물리 스윕
     const float TraceHeight = 50.0f;
     const FVector TraceStart = AgentFootLoc + FVector(0.f, 0.f, TraceHeight);
     const FVector TraceEnd = ProjectedTargetXY + FVector(0.f, 0.f, TraceHeight);
@@ -125,18 +200,14 @@ bool UTacticalTraversalComponent::TryCalculateTakeoffPoint(const FVector& AgentF
 
     if (World->SweepSingleByChannel(WallHit, TraceStart, TraceEnd, FQuat::Identity, ECC_Visibility, Sphere, QueryParams))
     {
-        // [다이내믹 오프셋 연산]
-        // 기본 여유분(AgentRadius + 30)에, 단차 높이(ZDiff)의 절반만큼을 수평 거리로 추가 확보합니다.
-        // ex) 1m 벽이면 50cm 물러나고, 2m 벽이면 1m 물러나서 뜁니다.
+        // 다이내믹 오프셋 연산: 벽면 법선(Normal)을 기준으로 물러남
         const float DynamicOffset = AgentRadius + 30.0f + FMath::Max(0.0f, ZDiff * 0.5f);
-        
-        // 올라가는 점프 (벽면 감지).
         OutTakeoffPoint = WallHit.Location + (WallHit.ImpactNormal * DynamicOffset);
         OutTakeoffPoint.Z = AgentFootLoc.Z;
     }
     else
     {
-        // 내려가는 점프 (낭떠러지).
+        // 내려가는 점프(낭떠러지) 처리
         if (ZDiff < -20.0f)
         {
             OutTakeoffPoint = ProjectedTargetXY - (DirectionToTarget * (AgentRadius + 15.0f));
@@ -145,7 +216,7 @@ bool UTacticalTraversalComponent::TryCalculateTakeoffPoint(const FVector& AgentF
         else return false;
     }
 
-    // [2] 머리 위 천장 검증.
+    // 2. 머리 위 천장 검증 (Clearance Check)
     ACharacter* OwnerChar = Cast<ACharacter>(GetOwner());
     if (OwnerChar)
     {
@@ -171,6 +242,11 @@ void UTacticalTraversalComponent::ExecuteParabolaJump()
     CurrentState = ETraversalState::Airborne;
     TimeSpentAirborne = 0.f;
 
+    if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
+    {
+        AICon->ClearFocus(EAIFocusPriority::Gameplay);
+    }
+
     const float HalfHeight = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
     const FVector FootLocation = OwnerChar->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
     const float LedgeClearance = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleRadius() + 20.0f;
@@ -188,17 +264,11 @@ void UTacticalTraversalComponent::ExecuteParabolaJump()
         return;
     }
 
-    // [디버그] 발사 시작점 — 시안.
     DrawDebugSphere(GetWorld(), FootLocation, 30.0f, 12, FColor::Cyan, false, 5.0f, 0, 2.0f);
-    // [디버그] 목표 착지점 — 빨강.
     DrawDebugSphere(GetWorld(), CachedFinalTarget, 30.0f, 12, FColor::Red, false, 5.0f, 0, 2.0f);
 
     if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
     {
-        // ───── 공중 마찰 임시 제거 ─────
-        // 템플릿 기본값 BrakingDecelerationFalling=1500이 XY velocity를 0.17초 안에 소진시켜
-        // 사실상 제자리 점프가 됨. 발사 동안만 0으로 만들고 OnLanded/AbortTraversal에서 복원.
-        // FallingLateralFriction도 같은 이유로 차단.
         SavedBrakingDecelFalling = MoveComp->BrakingDecelerationFalling;
         SavedFallingLateralFriction = MoveComp->FallingLateralFriction;
         MoveComp->BrakingDecelerationFalling = 0.f;
@@ -209,6 +279,7 @@ void UTacticalTraversalComponent::ExecuteParabolaJump()
     {
         AICon->StopMovement();
     }
+    
     OwnerChar->LaunchCharacter(LaunchVelocity, true, true);
 }
 
@@ -218,16 +289,12 @@ void UTacticalTraversalComponent::OnLanded(const FHitResult& Hit)
 
     if (ACharacter* OwnerChar = Cast<ACharacter>(GetOwner()))
     {
-        // [디버그] 실제 착지 위치 — 초록.
-        const float HalfHeight = OwnerChar->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
-        const FVector ActualFoot = OwnerChar->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
-        DrawDebugSphere(GetWorld(), ActualFoot, 30.0f, 12, FColor::Green, false, 5.0f, 0, 2.0f);
-
-        // 공중 마찰 복원.
         if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
         {
             MoveComp->BrakingDecelerationFalling = SavedBrakingDecelFalling;
             MoveComp->FallingLateralFriction = SavedFallingLateralFriction;
+            MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+            MoveComp->bUseControllerDesiredRotation = false;
         }
     }
 
@@ -240,19 +307,22 @@ void UTacticalTraversalComponent::AbortTraversal()
     CurrentState = ETraversalState::Idle;
     TimeSpentMoving = 0.f;
     TimeSpentAirborne = 0.f;
+    SteerAlpha = 0.f;
 
     if (APartyCharacter* OwnerChar = Cast<APartyCharacter>(GetOwner()))
     {
-        // 공중 마찰 복원 (Airborne에서 abort된 경우 대비).
+        if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
+        {
+            AICon->StopMovement();
+            AICon->ClearFocus(EAIFocusPriority::Gameplay);
+        }
+
         if (UCharacterMovementComponent* MoveComp = OwnerChar->GetCharacterMovement())
         {
             MoveComp->BrakingDecelerationFalling = SavedBrakingDecelFalling;
             MoveComp->FallingLateralFriction = SavedFallingLateralFriction;
-        }
-
-        if (AAIController* AICon = Cast<AAIController>(OwnerChar->GetController()))
-        {
-            AICon->StopMovement();
+            MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+            MoveComp->bUseControllerDesiredRotation = false;
         }
     }
 }
