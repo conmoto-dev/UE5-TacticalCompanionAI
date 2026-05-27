@@ -13,11 +13,10 @@ APartyCharacter::APartyCharacter()
 	AIControllerClass = ACompanionAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	
-	// RVO Avoidance for smooth companion-vs-companion avoidance.
-	// May be replaced with Detour Crowd integration (week 2 evaluation).
-	// 仲間同士のスムーズな回避用。Detour Crowd検証時に置換予定。
-	GetCharacterMovement()->bUseRVOAvoidance = true;
-	GetCharacterMovement()->AvoidanceConsiderationRadius = 200.f;
+	// RVO를 끄고, Detour Crowd 기반에서 두 캐릭터가 같은 목표점에 도달했을 때
+	// 서로 비비적대지 않고 여유롭게 멈추도록 도달 반경(AcceptanceRadius)을 넉넉하게 늘립니다.
+	GetCharacterMovement()->bUseRVOAvoidance = false;
+	AcceptanceRadius = 80.f; // (캡슐 반지름 40.f의 2배 수준으로 확장)
 	
 	// Camera passes through capsule + mesh (no obstruction on follower characters).
 	// カメラがカプセル・メッシュを貫通（仲間越しのカメラブロック防止）。

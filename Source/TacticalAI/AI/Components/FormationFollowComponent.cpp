@@ -1,6 +1,8 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "AI/Components/FormationFollowComponent.h"
+
+#include "AIController.h"
 #include "GameFramework/Character.h"
 #include "NavigationSystem.h"
 #include "Engine/World.h"
@@ -14,6 +16,7 @@
 #include "Algo/Reverse.h"
 #include "AI/Strategies/YieldStrategy.h"
 #include "EngineUtils.h"
+#include "TacticalCrowdFollowingComponent.h"
 #include "TacticalTraversalComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -70,8 +73,6 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	UpdateFormationRotation(DeltaTime, CurrentLeader);
 
 	// ===== [4] Spatial reference: leader's foot location =====
-	// Foot (capsule bottom) instead of actor center to avoid Z-axis floating bugs.
-	// カプセル底を基準にしてZ軸浮遊を防ぐ。
 	const float HalfHeight = CurrentLeader->GetSimpleCollisionHalfHeight();
 	const FVector LeaderFootLoc = CurrentLeader->GetActorLocation() - FVector(0.f, 0.f, HalfHeight);
 
@@ -88,8 +89,6 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	// ===== [6.5] Yield state evaluation (per-slot) =====
 	UpdateYieldStates(DeltaTime);
 
-	// Yielding slots get yield coordinate, others get slot coordinate.
-	// Yielding中はYield座標、それ以外はスロット座標をpush。
 	// ===== [7] Push positions to occupants (slot OR yield OR traversal-aware) =====
 	for (int32 SlotIdx = 0; SlotIdx < SlotAssignment.Num() && SlotIdx < CachedSlotLocations.Num(); ++SlotIdx)
 	{
@@ -103,6 +102,22 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 		UTacticalTraversalComponent* TraversalComp = GetOrCacheTraversalComp(Occupant);
 
+		// =====================================================================
+		// [신규 추가] Detour Crowd 상태 주입 (Injection)
+		// 전술 행동(점프) 중이 아닐 때만 Crowd Component를 제어하여 충돌을 방지합니다.
+		// =====================================================================
+		if (!TraversalComp || !TraversalComp->IsTraversing())
+		{
+			if (AAIController* AICon = Cast<AAIController>(Occupant->GetController()))
+			{
+				if (UTacticalCrowdFollowingComponent* CrowdComp = Cast<UTacticalCrowdFollowingComponent>(AICon->GetPathFollowingComponent()))
+				{
+					// 리더는 플레이어가 조종하므로 AIController 루프를 타지 않음 (false 고정)
+					CrowdComp->SetTacticalAvoidanceState(false, bIsYielding);
+				}
+			}
+		}
+
 		// 2. 디커플링: 이미 전술적 행동 중이면 간섭 정책 분기.
 		bool bForcedByAbort = false;
 		if (TraversalComp && TraversalComp->IsTraversing())
@@ -110,18 +125,15 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			const ETraversalState TState = TraversalComp->GetCurrentState();
 			if (TState == ETraversalState::Airborne)
 			{
-				// 공중에선 절대 간섭 금지. OnLanded 또는 timeout 대기.
-				continue;
+				continue; // 공중에선 절대 간섭 금지
 			}
-			else if (TState == ETraversalState::MovingToTakeoff)
+			else if (TState == ETraversalState::MovingToTakeoff || TState == ETraversalState::SteeringToTakeoff)
 			{
 				// 목표가 너무 멀리 표류 → abort 후 4번 분기에서 재명령.
 				const float DriftSq = FVector::DistSquared(TargetLoc, TraversalComp->GetCachedFinalTarget());
 				if (DriftSq > FMath::Square(TraversalTargetDriftThreshold))
 				{
 					TraversalComp->AbortTraversal();
-					// AbortTraversal 후 PartyCharacter::CurrentTargetLocation은 stale.
-					// 강제 push로 UpdateThreshold deduplication 우회 → 새 MoveTo 발행 보장.
 					bForcedByAbort = true;
 				}
 				else
@@ -140,16 +152,14 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 				const float MaxStepHeight = MoveComp->MaxStepHeight;
 				if (ZDiff > (MaxStepHeight + JumpZThresholdMargin))
 				{
-					// RequestTacticalTraversal 내부에서 IsMovingOnGround, 거리/높이 상한,
-					// 천장 clearance, 착지지점 NavMesh 검증 다 통과해야 true.
 					if (TraversalComp->RequestTacticalTraversal(TargetLoc))
 					{
 						continue; // 점프 명령 성공 → 보행 명령 스킵.
 					}
-					// 점프 거부됨 → 4번 보행 분기로 자연스럽게 떨어짐 (NavMesh 우회 fallback).
 				}
 			}
 		}
+		
 		// 4. 일반 이동 명령. Yield 중 또는 abort 직후엔 force refresh.
 		Occupant->UpdateTargetSlotLocation(TargetLoc, bIsYielding || bForcedByAbort);
 	}
@@ -157,8 +167,6 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	// ===== [8] Debug visualization =====
 	for (int32 SlotIdx = 0; SlotIdx < SlotAssignment.Num() && SlotIdx < CachedSlotLocations.Num(); ++SlotIdx)
 	{
-		// Slot sphere: magenta if Yielding, green otherwise.
-		// Yielding中はマゼンタ、Following中はグリーン。
 		const bool bIsYielding = SlotYieldStates.IsValidIndex(SlotIdx)
 			&& SlotYieldStates[SlotIdx] == ESlotYieldState::Yielding;
 		const FColor SlotColor = bIsYielding ? FColor::Magenta : FColor::Green;
@@ -171,12 +179,8 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 		if (APartyCharacter* Occupant = SlotAssignment[SlotIdx])
 		{
-			// Cyan line: occupant → assigned slot (visualizes current matching).
-			// 現在のマッチング可視化。
 			DrawDebugLine(GetWorld(), Occupant->GetActorLocation(), CachedSlotLocations[SlotIdx], FColor::Cyan, false, -1.0f, 0, 1.5f);
 
-			// Magenta arrow: occupant → yield target (only when Yielding).
-			// Yielding中のみYield目標を矢印で表示。
 			if (bIsYielding && CachedYieldLocations.IsValidIndex(SlotIdx))
 			{
 				DrawDebugDirectionalArrow(GetWorld(),
@@ -191,7 +195,6 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	{
 		const FString Status = bMatchingAppliedOnStop ? TEXT("Matching: APPLIED") : TEXT("Matching: STANDBY");
 		GEngine->AddOnScreenDebugMessage(2, 0.0f, bMatchingAppliedOnStop ? FColor::Green : FColor::White, Status);
-
 		GEngine->AddOnScreenDebugMessage(3, 0.0f, FColor::White,
 			FString::Printf(TEXT("Stop duration: %.2f / %.2f"), CurrentStopDuration, StopDurationToTrigger));
 	}
@@ -688,8 +691,6 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 {
 	const int32 N = SlotAssignment.Num();
 
-	// State arrays sync (unchanged).
-	// 状態配列の同期（変更なし）。
 	if (SlotYieldStates.Num() != N)
 	{
 		SlotYieldStates.Init(ESlotYieldState::Following, N);
@@ -703,8 +704,6 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 		SlotYieldDelayTimers.Init(0.f, N);
 	}
 	
-	// No formation or no strategy → skip yield logic entirely.
-	// Formationまたは Strategy 未設定 → Yield処理スキップ。
 	if (!CurrentFormation || !CurrentFormation->YieldStrategy) return;
 	
 	UYieldStrategy* Strategy = CurrentFormation->YieldStrategy;
@@ -712,18 +711,27 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 
 	for (int32 SlotIdx = 0; SlotIdx < N; ++SlotIdx)
 	{
+		APartyCharacter* Occupant = SlotAssignment[SlotIdx];
+		UTacticalTraversalComponent* TraversalComp = GetOrCacheTraversalComp(Occupant);
+		
+		// =====================================================================
+		// [신규 추가] 점프 등 전술 행동 중인 에이전트는 Yield 판단에서 완벽히 격리
+		// =====================================================================
+		if (TraversalComp && TraversalComp->IsTraversing()) 
+		{
+			SlotYieldStates[SlotIdx] = ESlotYieldState::Following;
+			SlotYieldDelayTimers[SlotIdx] = 0.f;
+			continue; 
+		}
+
 		switch (SlotYieldStates[SlotIdx])
 		{
 		case ESlotYieldState::Following:
 			if (Strategy->ShouldYieldForSlot(Context, SlotIdx))
 			{
-				// Accumulate delay while condition holds.
-				// 条件成立中はタイマー累積。
 				SlotYieldDelayTimers[SlotIdx] += DeltaTime;
 				if (SlotYieldDelayTimers[SlotIdx] >= Strategy->GetEntryDelay())
 				{
-					// Delay elapsed → re-evaluate by computing yield location.
-					// 遅延終了 → Yield座標算出による再評価。
 					FVector YieldLoc;
 					if (Strategy->TryCalculateYieldLocationForSlot(Context, SlotIdx, YieldLoc))
 					{
