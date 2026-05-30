@@ -1,3 +1,4 @@
+// TacticalCrowdFollowingComponent.cpp
 #include "AI/Components/TacticalCrowdFollowingComponent.h"
 
 UTacticalCrowdFollowingComponent::UTacticalCrowdFollowingComponent(const FObjectInitializer& ObjectInitializer)
@@ -10,39 +11,38 @@ void UTacticalCrowdFollowingComponent::BeginPlay()
 	Super::BeginPlay();
 }
 
-void UTacticalCrowdFollowingComponent::SetTacticalAvoidanceState(bool bIsLeader, bool bIsYielding)
+void UTacticalCrowdFollowingComponent::ApplyRole(ECrowdAvoidanceRole Role)
 {
-	// [최적화] 상태가 변하지 않았다면 일찍 반환 (불필요한 재등록/오버헤드 방지)
-	if (bHasInitializedState && bCachedIsLeader == bIsLeader && bCachedIsYielding == bIsYielding)
-	{
-		return;
-	}
-
-	bCachedIsLeader = bIsLeader;
-	bCachedIsYielding = bIsYielding;
+	// 상태가 안 바뀌었으면 일찍 반환 (불필요한 재등록 방지).
+	if (bHasInitializedState && CachedRole == Role) return;
+	CachedRole = Role;
 	bHasInitializedState = true;
+	
+	using namespace CrowdGroupBits;
 
-	// 💡 Detour Crowd 회피 그룹 (비트마스크)
-	// 1 (1<<0) : Leader (절대 존엄)
-	// 2 (1<<1) : Normal Follower (일반 동료)
-	// 4 (1<<2) : Yielding Follower (양보 중)
-
-	if (bIsLeader)
+	// 그룹 비트:
+	//  Leader(1)   : 절대 존엄. 아무도 안 피함.
+	//  Normal(2)   : 일반 동료. 리더·동료·양보자 모두 회피.
+	//  Yielding(4) : 양보 중. 리더·동료를 피함.
+	switch (Role)
 	{
-		SetAvoidanceGroup(1);
+	case ECrowdAvoidanceRole::Leader:
+		SetAvoidanceGroup(Leader);
 		SetGroupsToAvoid(0);
-		SetGroupsToIgnore(2 | 4);
-	}
-	else if (bIsYielding)
-	{
-		SetAvoidanceGroup(4);
-		SetGroupsToAvoid(1 | 2); // 리더(1)와 일반 동료(2)를 피함
+		SetGroupsToIgnore(Normal | Yielding);
+		break;
+
+	case ECrowdAvoidanceRole::Yielding:
+		SetAvoidanceGroup(Yielding);
+		SetGroupsToAvoid(Leader | Normal);
 		SetGroupsToIgnore(0);
-	}
-	else
-	{
-		SetAvoidanceGroup(2);
-		SetGroupsToAvoid(1 | 2 | 4); // 리더(1) 최우선 회피, 동료(2)와 겹침 방지, Yield중인 동료(4) 회피
+		break;
+
+	case ECrowdAvoidanceRole::Normal:
+	default:
+		SetAvoidanceGroup(Normal);
+		SetGroupsToAvoid(Leader | Normal | Yielding);
 		SetGroupsToIgnore(0);
+		break;
 	}
 }

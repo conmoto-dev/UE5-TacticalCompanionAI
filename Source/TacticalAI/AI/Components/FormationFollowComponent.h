@@ -6,6 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "AI/Strategies/YieldContextProvider.h"
+#include "AI/CrowdAvoidanceTypes.h"
 #include "FormationFollowComponent.generated.h"
 
 class UFormationDataAsset;
@@ -274,6 +275,9 @@ private:
 	// プレイヤーがスロットからこの距離以上離れた時のみ再算出。
 	UPROPERTY(EditDefaultsOnly, Category = "Formation|Cache", meta = (ClampMin = "0.0"))
 	float SlotCacheUpdateDistance = 300.f;
+	
+	// ───── DetourCrowd ─────
+	void SyncAvoidanceRoleForSlot(int32 SlotIdx, ECrowdAvoidanceRole Role);
 	
 	// =========================================================================
 	// Traversal (Jump Integration)

@@ -53,4 +53,7 @@ private:
 	// MoveTo到達判定半径。
 	UPROPERTY(EditAnywhere, Category="Formation")
 	float AcceptanceRadius = 30.f;
+	
+	UPROPERTY(VisibleAnywhere, Category="Tactical AI")
+	TObjectPtr<class UPlayerCrowdAgentComponent> PlayerAgentComp;
 };

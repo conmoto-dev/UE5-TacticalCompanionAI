@@ -5,6 +5,7 @@
 #include "AIController.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "AI/Components/PlayerCrowdAgentComponent.h"
 
 APartyCharacter::APartyCharacter()
 {
@@ -13,15 +14,15 @@ APartyCharacter::APartyCharacter()
 	AIControllerClass = ACompanionAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	
-	// RVO를 끄고, Detour Crowd 기반에서 두 캐릭터가 같은 목표점에 도달했을 때
-	// 서로 비비적대지 않고 여유롭게 멈추도록 도달 반경(AcceptanceRadius)을 넉넉하게 늘립니다.
 	GetCharacterMovement()->bUseRVOAvoidance = false;
-	AcceptanceRadius = 80.f; // (캡슐 반지름 40.f의 2배 수준으로 확장)
+	AcceptanceRadius = 80.f;
 	
 	// Camera passes through capsule + mesh (no obstruction on follower characters).
 	// カメラがカプセル・メッシュを貫通（仲間越しのカメラブロック防止）。
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	
+	PlayerAgentComp = CreateDefaultSubobject<UPlayerCrowdAgentComponent>(TEXT("PlayerAgentComp"));
 }
 
 void APartyCharacter::BeginPlay()

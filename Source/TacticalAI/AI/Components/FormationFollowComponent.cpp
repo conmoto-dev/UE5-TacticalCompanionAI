@@ -19,6 +19,7 @@
 #include "TacticalCrowdFollowingComponent.h"
 #include "TacticalTraversalComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Interfaces/TacticalAvoidanceController.h"
 
 UFormationFollowComponent::UFormationFollowComponent()
 {
@@ -101,22 +102,6 @@ void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		const FVector TargetLoc = bIsYielding ? CachedYieldLocations[SlotIdx] : CachedSlotLocations[SlotIdx];
 
 		UTacticalTraversalComponent* TraversalComp = GetOrCacheTraversalComp(Occupant);
-
-		// =====================================================================
-		// [신규 추가] Detour Crowd 상태 주입 (Injection)
-		// 전술 행동(점프) 중이 아닐 때만 Crowd Component를 제어하여 충돌을 방지합니다.
-		// =====================================================================
-		if (!TraversalComp || !TraversalComp->IsTraversing())
-		{
-			if (AAIController* AICon = Cast<AAIController>(Occupant->GetController()))
-			{
-				if (UTacticalCrowdFollowingComponent* CrowdComp = Cast<UTacticalCrowdFollowingComponent>(AICon->GetPathFollowingComponent()))
-				{
-					// 리더는 플레이어가 조종하므로 AIController 루프를 타지 않음 (false 고정)
-					CrowdComp->SetTacticalAvoidanceState(false, bIsYielding);
-				}
-			}
-		}
 
 		// 2. 디커플링: 이미 전술적 행동 중이면 간섭 정책 분기.
 		bool bForcedByAbort = false;
@@ -737,6 +722,9 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 					{
 						CachedYieldLocations[SlotIdx] = YieldLoc;
 						SlotYieldStates[SlotIdx] = ESlotYieldState::Yielding;
+						
+						SyncAvoidanceRoleForSlot(SlotIdx, ECrowdAvoidanceRole::Yielding);
+						
 						UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d ENTER Yielding at %s"),
 							SlotIdx, *YieldLoc.ToString());
 					}
@@ -753,6 +741,9 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 			if (Strategy->ShouldExitYieldForSlot(Context, SlotIdx))
 			{
 				SlotYieldStates[SlotIdx] = ESlotYieldState::Following;
+				
+				SyncAvoidanceRoleForSlot(SlotIdx, ECrowdAvoidanceRole::Normal);
+				
 				UE_LOG(LogTemp, Warning, TEXT("[Yield] Slot %d EXIT Yielding -> Following"), SlotIdx);
 			}
 			break;
@@ -760,6 +751,24 @@ void UFormationFollowComponent::UpdateYieldStates(float DeltaTime)
 	}
 }
 
+// =========================================================================
+// DetourCrowd implementation
+// =========================================================================
+void UFormationFollowComponent::SyncAvoidanceRoleForSlot(int32 SlotIdx, ECrowdAvoidanceRole Role)
+{
+	APartyCharacter* Occupant = SlotAssignment.IsValidIndex(SlotIdx) ? SlotAssignment[SlotIdx] : nullptr;
+	if (!Occupant) return;
+
+	// 컨트롤러가 Player/AI/Enemy 무엇이든, 인터페이스 구현했으면 잡힌다.
+	if (auto* Avoid = Cast<ITacticalAvoidanceController>(Occupant->GetController()))
+	{
+		Avoid->SetAvoidanceRole(Role);
+	}
+}
+
+// =========================================================================
+// Traversal(JumpDetect) implementation
+// =========================================================================
 UTacticalTraversalComponent* UFormationFollowComponent::GetOrCacheTraversalComp(APartyCharacter* Character)
 {
 	if (!Character) return nullptr;
