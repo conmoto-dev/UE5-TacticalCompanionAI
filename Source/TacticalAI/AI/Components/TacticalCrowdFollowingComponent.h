@@ -16,8 +16,11 @@ public:
 
 	/** 회피 역할 적용. 같은 role 재요청은 디바운싱으로 무시. */
 	UFUNCTION(BlueprintCallable, Category = "Tactical AI|Crowd")
-	void ApplyRole(ECrowdAvoidanceRole Role);
+	void ApplyRole(ECrowdAvoidanceRole CrowdRole);
 
+	UPROPERTY(EditDefaultsOnly, Category="Crowd", meta=(ClampMin="1.0"))
+	float CrowdAvoidanceRangeMultiplier = 1.2f;
+	
 protected:
 	virtual void BeginPlay() override;
 

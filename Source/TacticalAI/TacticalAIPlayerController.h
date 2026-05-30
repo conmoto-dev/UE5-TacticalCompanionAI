@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "Interfaces/TacticalAvoidanceController.h"
 #include "TacticalAIPlayerController.generated.h"
 
 class UInputMappingContext;
@@ -14,7 +15,7 @@ class UUserWidget;
  *  Manages input mappings
  */
 UCLASS(abstract)
-class ATacticalAIPlayerController : public APlayerController
+class ATacticalAIPlayerController : public APlayerController, public ITacticalAvoidanceController
 {
 	GENERATED_BODY()
 	
@@ -49,4 +50,11 @@ protected:
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
 
+	
+public:
+	virtual void SetAvoidanceRole(ECrowdAvoidanceRole CrowdRole) override;
+
+protected:
+	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
 };

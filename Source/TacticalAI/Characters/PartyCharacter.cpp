@@ -15,7 +15,6 @@ APartyCharacter::APartyCharacter()
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 	
 	GetCharacterMovement()->bUseRVOAvoidance = false;
-	AcceptanceRadius = 80.f;
 	
 	// Camera passes through capsule + mesh (no obstruction on follower characters).
 	// カメラがカプセル・メッシュを貫通（仲間越しのカメラブロック防止）。
