@@ -1,0 +1,71 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
+#include "BattleFormationComponent.generated.h"
+
+class USlotGeneratorStrategy;
+class APartyCharacter;
+
+/**
+ * 전투 진형 컴포넌트 (골격).
+ * anchor = 타겟 transform, 슬롯 = 절차적 생성(SlotGenerator Strategy).
+ * 평시 FollowComponent와 (a)anchor (b)슬롯생성만 다르고, 나머지 기하 파이프라인은
+ * 향후 공통 부모로 추출 예정 (지금은 Battle 단독 검증 우선 — Rule of Three).
+ *
+ * 戦闘隊形コンポーネント（骨格）。anchor=ターゲット、スロット=手続き生成。
+ */
+UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
+class TACTICALAI_API UBattleFormationComponent : public UActorComponent
+{
+	GENERATED_BODY()
+
+public:
+	UBattleFormationComponent();
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	virtual void BeginPlay() override;
+
+	UPROPERTY(EditAnywhere, Category = "Battle|Debug")
+	TObjectPtr<AActor> DebugTargetActor;
+	
+	/** 외부(나중엔 [1] 타겟선정/Manager)에서 교전 타겟 지정. 지금은 에디터/테스트에서 직접 호출. */
+	UFUNCTION(BlueprintCallable, Category = "Battle")
+	void SetCombatTarget(AActor* InTarget) { CurrentTarget = InTarget; }
+
+protected:
+	// 절차적 슬롯 생성 전략. 디테일 패널에서 _Arc 등 선택 (Yield Strategy와 같은 Instanced 패턴).
+	UPROPERTY(EditAnywhere, Instanced, Category = "Battle")
+	TObjectPtr<USlotGeneratorStrategy> SlotGenerator;
+
+	// 디자이너 기본 반경. 최종 반경 = 이 값 + 타겟의 EncircleRadius.
+	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "0.0"))
+	float DesignerBaseRadius = 200.f;
+
+	// 배치할 인원수 (지금은 고정 테스트값. 나중에 이 타겟에 할당된 동료 수로).
+	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "1", ClampMax = "8"))
+	int32 NumSlots = 3;
+
+	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
+	TWeakObjectPtr<AActor> CurrentTarget;
+
+	// DEBUG
+	// [임시 검증] 호로 보낼 동료들. 직접 할당. 스텝 7에서 Manager 연동으로 대체.
+	UPROPERTY(EditAnywhere, Category = "Battle|Debug")
+	TArray<TObjectPtr<APartyCharacter>> DebugCompanions;
+	
+private:
+	// [a] 기준 프레임. 타겟 유효하면 그 transform, 아니면 미반환(파이프라인 정지).
+	TOptional<FTransform> GetFormationAnchor() const;
+
+	// 최종 반경 산출 (디자이너 기본 + 타겟 크기 보정). Strategy는 이 출처를 모른다.
+	float ComputeBaseRadius() const;
+	
+	
+	//Follow와 공통 로직
+	FVector AdjustLocationForEnvironment(const FVector& IdealLocation, const FVector& AnchorOrigin) const;
+	bool TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const;
+	bool TryFindGroundZ(const FVector& Point, float& OutZ) const;
+	bool TryCalculateWallSlide(const FVector& From, const FVector& To, FVector& OutSlidLocation) const;
+	FVector CalculateFallbackLocation(const FVector& AnchorOrigin, const FVector& IdealLocation) const;
+};

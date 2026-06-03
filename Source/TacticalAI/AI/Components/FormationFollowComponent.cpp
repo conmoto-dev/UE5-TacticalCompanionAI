@@ -230,67 +230,75 @@ void UFormationFollowComponent::UpdateGapScale(float DeltaTime, AActor* CurrentL
 
 void UFormationFollowComponent::UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate)
 {
-    check(CurrentFormation);
+	check(CurrentFormation);
 
-    const int32 SlotCount = CurrentFormation->Slots.Num();
+	const int32 SlotCount = CurrentFormation->Slots.Num();
 
-    // Sync per-slot cache array.
-    // スロット別キャッシュ配列の同期。
-    if (LastCalculatedSlotLocations.Num() != SlotCount)
-    {
-        LastCalculatedSlotLocations.Init(FVector(MAX_flt, MAX_flt, MAX_flt), SlotCount);
-    }
+	if (LastCalculatedSlotLocations.Num() != SlotCount)
+	{
+		LastCalculatedSlotLocations.Init(FVector(MAX_flt, MAX_flt, MAX_flt), SlotCount);
+	}
 
-    // Get player location once for per-slot distance check.
-    // プレイヤー位置を1回取得。
-    const APawn* Player = GetPlayerPawn();
-    const bool bHasPlayer = (Player != nullptr);
-    const FVector PlayerLoc = bHasPlayer ? Player->GetActorLocation() : FVector::ZeroVector;
+	// [a] 기준 프레임 1회 계산 (전 슬롯 공유).
+	const FTransform Anchor = GetFormationAnchor(LeaderFootLoc);
 
-    // Per-slot trigger: update only when the slot's last cached position is
-    // far enough from the player. This prevents the slot from "chasing" the
-    // player during passage/Yield, which previously caused occupants to
-    // cross the player's path on Yield exit.
-    // スロット別トリガー: プレイヤーがスロットから十分離れた時のみ再算出。
-    // Yield/通過中にスロット座標がプレイヤーを追う現象を防ぐ。
-    for (int32 i = 0; i < SlotCount; ++i)
-    {
-        bool bShouldUpdate = bForceUpdate;
+	// [b] 로컬 슬롯 1회 계산 (전 슬롯 한꺼번에 — 미래 절차적 생성 대비).
+	CalculateRawSlots(CachedLocalSlots);
 
-        if (!bShouldUpdate)
-        {
-            if (bHasPlayer)
-            {
-                const float DistSq = FVector::DistSquared(LastCalculatedSlotLocations[i], PlayerLoc);
-                bShouldUpdate = (DistSq > FMath::Square(SlotCacheUpdateDistance));
-            }
-            else
-            {
-                // No-player fallback: always update (degenerate case).
-                // プレイヤー不在時は常に更新。
-                bShouldUpdate = true;
-            }
-        }
+	const APawn* Player = GetPlayerPawn();
+	const bool bHasPlayer = (Player != nullptr);
+	const FVector PlayerLoc = bHasPlayer ? Player->GetActorLocation() : FVector::ZeroVector;
 
-        if (bShouldUpdate)
-        {
-            const FVector IdealLoc = CalculateIdealLocation(i, LeaderFootLoc);
-            CachedSlotLocations[i] = AdjustLocationForEnvironment(IdealLoc, CurrentLeader, LeaderFootLoc);
-            LastCalculatedSlotLocations[i] = CachedSlotLocations[i];
-        }
-    }
+	// 슬롯별 거리 트리거 캐시는 그대로 유지.
+	// raw 슬롯은 위에서 전부 뽑았지만, 환경보정+반영은 기존처럼 슬롯별 선택적.
+	for (int32 i = 0; i < SlotCount && i < CachedLocalSlots.Num(); ++i)
+	{
+		bool bShouldUpdate = bForceUpdate;
+
+		if (!bShouldUpdate)
+		{
+			if (bHasPlayer)
+			{
+				const float DistSq = FVector::DistSquared(LastCalculatedSlotLocations[i], PlayerLoc);
+				bShouldUpdate = (DistSq > FMath::Square(SlotCacheUpdateDistance));
+			}
+			else
+			{
+				bShouldUpdate = true;
+			}
+		}
+
+		if (bShouldUpdate)
+		{
+			// [c] local → world 변환. 이 한 줄이 평시/전투 공통 기하.
+			const FVector IdealLoc = Anchor.TransformPosition(CachedLocalSlots[i]);
+			CachedSlotLocations[i] = AdjustLocationForEnvironment(IdealLoc, CurrentLeader, LeaderFootLoc);
+			LastCalculatedSlotLocations[i] = CachedSlotLocations[i];
+		}
+	}
 }
 
-FVector UFormationFollowComponent::CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const
+FTransform UFormationFollowComponent::GetFormationAnchor(const FVector& LeaderFootLoc) const
 {
-	if (!CurrentFormation || !CurrentFormation->Slots.IsValidIndex(SlotIndex)) return FVector::ZeroVector;
+	// [a] 기준 프레임 = 리더 발밑(원점) + 평활화된 회전(방향).
+	// 리더 즉시 회전이 아니라 CachedFormationRotation을 쓰는 건 급선회 시 "무게감" 연출.
+	// 전투에서는 이 함수만 target 기준으로 바뀐다 (호출부·변환·이후 파이프라인 불변).
+	return FTransform(CachedFormationRotation, LeaderFootLoc);
+}
 
-	// Use smoothed CachedFormationRotation (not leader's instant rotation) to give the formation
-	// a heavy, intentional feel on sharp turns.
-	// リーダー即時回転ではなく平滑化された回転を基準とし、急旋回時の「重み」を演出。
-	const FTransform VirtualFormationTransform(CachedFormationRotation, LeaderFootLoc);
-	const FVector ScaledOffset = CurrentFormation->Slots[SlotIndex].LocalOffset * CurrentGapScale;
-	return VirtualFormationTransform.TransformPosition(ScaledOffset);
+void UFormationFollowComponent::CalculateRawSlots(TArray<FVector>& OutLocalOffsets) const
+{
+	OutLocalOffsets.Reset();
+	if (!CurrentFormation) return;
+
+	// [b] 기준 프레임 로컬 공간의 슬롯 오프셋.
+	// 평시 = DataAsset 정적 offset × gap scale.
+	// 전투에서는 이 부분이 절차적 생성(각도 분배 Strategy)으로 갈린다.
+	OutLocalOffsets.Reserve(CurrentFormation->Slots.Num());
+	for (const FFormationSlotData& Slot : CurrentFormation->Slots)
+	{
+		OutLocalOffsets.Add(Slot.LocalOffset * CurrentGapScale);
+	}
 }
 
 FVector UFormationFollowComponent::AdjustLocationForEnvironment(const FVector& IdealLocation, const AActor* CurrentLeader, const FVector& LeaderFootLoc) const

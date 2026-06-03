@@ -104,15 +104,20 @@ private:
 	// Slot Position Cache & Calculation
 	// =========================================================================
 private:
-	// Final computed slot world positions, cached per update cycle.
 	TArray<FVector> CachedSlotLocations;
 
-	// Integrates GapScale + Rotation into slot world positions.
-	// bForceUpdate=true skips distance-threshold caching and forces recalculation.
 	void UpdateFormationCache(const FVector& LeaderFootLoc, AActor* CurrentLeader, bool bForceUpdate = false);
 
-	// Pure math: ideal slot world position from leader's foot location.
-	FVector CalculateIdealLocation(int32 SlotIndex, const FVector& LeaderFootLoc) const;
+	// ───── Formation policy hooks (future: lift to abstract base) ─────
+	// 평시/전투가 갈리는 두 지점. 지금은 평시 구현만, 나중에 자식이 override할 후보.
+	// [a] 슬롯 배치의 기준 프레임(원점 + 방향). 평시 = 리더 발밑 + 평활화 회전.
+	FTransform GetFormationAnchor(const FVector& LeaderFootLoc) const;
+
+	// [b] 기준 프레임 로컬 공간의 슬롯 오프셋들. 평시 = DataAsset 정적 offset × gap.
+	void CalculateRawSlots(TArray<FVector>& OutLocalOffsets) const;
+
+	// 슬롯 메모리 재할당 방지용 캐시 버퍼 (매 틱 재사용).
+	TArray<FVector> CachedLocalSlots;
 
 
 	// =========================================================================
