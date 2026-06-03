@@ -3,17 +3,23 @@
 #include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
 #include "AI/Components/FormationFollowComponent.h"
+#include "AI/Components/BattleFormationComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 APartyManager::APartyManager()
 {
-	PrimaryActorTick.bCanEverTick = false; // The manager itself doesn't need to tick.
-	FormationComponent = CreateDefaultSubobject<UFormationFollowComponent>(TEXT("FormationComp"));
+	// The manager itself doesn't need to tick -> Need to be tick for Detect Battle Status.
+	PrimaryActorTick.bCanEverTick = true;
+	
+	FollowComponent = CreateDefaultSubobject<UFormationFollowComponent>(TEXT("FollowComp"));
+	BattleComponent = CreateDefaultSubobject<UBattleFormationComponent>(TEXT("BattleComp"));
 }
 
 void APartyManager::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	SetFormationMode(EPartyFormationMode::Follow);
 	
 	APartyCharacter* Leader = GetLeader();
 	if (!Leader) return;
@@ -33,6 +39,12 @@ void APartyManager::BeginPlay()
 			OldPawn->Destroy();
 		}
 	}
+}
+
+void APartyManager::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+	TickModeDecision();
 }
 
 APartyCharacter* APartyManager::GetLeader() const
@@ -60,4 +72,38 @@ void APartyManager::SwapLeader(int32 NewLeaderIndex)
 	// Actual controller swap logic comes in a later step.
 	// For now we just update the index.
 	CurrentLeaderIndex = NewLeaderIndex;
+}
+
+//** Formation Change Algorithm *//
+void APartyManager::SetFormationMode(EPartyFormationMode NewMode)
+{
+	const bool bFollow = (NewMode == EPartyFormationMode::Follow);
+
+	// 두 컴포넌트 상태를 매번 명시적으로 세팅 (멱등 — 같은 모드 재호출 무해).
+	// SetActive + Tick 둘 다 꺼야 비활성 컴포넌트가 push 안 함 (토글 함정 방지).
+	FollowComponent->SetActive(bFollow);
+	FollowComponent->SetComponentTickEnabled(bFollow);
+
+	BattleComponent->SetActive(!bFollow);
+	BattleComponent->SetComponentTickEnabled(!bFollow);
+}
+
+void APartyManager::TickModeDecision()
+{
+	const APartyCharacter* Leader = GetLeader();
+	const AActor* Target = DebugBattleTarget;
+	if (!Leader || !Target) return; // 타겟 없으면 판단 안 함 (현 모드 유지)
+
+	const float DistSq = FVector::DistSquared(Leader->GetActorLocation(), Target->GetActorLocation());
+
+	// 히스테리시스: 진입은 가까이, 이탈은 멀리. 사이 구간은 현상유지(깜빡임 방지).
+	if (DistSq < FMath::Square(EnterBattleDistance))
+	{
+		SetFormationMode(EPartyFormationMode::Battle);
+	}
+	else if (DistSq > FMath::Square(ExitBattleDistance))
+	{
+		SetFormationMode(EPartyFormationMode::Follow);
+	}
+	// 사이 구간: 아무것도 안 함 → 현재 모드 유지.
 }

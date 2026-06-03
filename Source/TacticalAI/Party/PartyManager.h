@@ -9,6 +9,14 @@
 class APartyCharacter;
 class UFormationFollowComponent;
 class UFormationDataAsset;
+class UBattleFormationComponent;
+
+UENUM(BlueprintType)
+enum class EPartyFormationMode : uint8
+{
+	Follow  UMETA(DisplayName = "Follow"),
+	Battle  UMETA(DisplayName = "Battle"),
+};
 
 /**
  * Hub for party state. Owns members, leader index, and the formation system.
@@ -23,6 +31,8 @@ class TACTICALAI_API APartyManager : public AActor
 	
 public:	
 	APartyManager();
+	
+	virtual void Tick(float DeltaTime) override;
 	
 	/** Returns the current leader character. */
 	/** 現在のリーダーキャラクターを返す。 */
@@ -50,8 +60,38 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Party")
 	int32 CurrentLeaderIndex = 0;
 	
+	/** Set Formation by current party state.(Idle, Battle, etc..)*/
+public:
+	/** 진형 모드 전환 (실행만 담당 — 전환 "결정"은 호출자/추후 StateTree). 멱등. */
+	UFUNCTION(BlueprintCallable, Category="Formation")
+	void SetFormationMode(EPartyFormationMode NewMode);
+
+protected:
 	/** Formation system component. Performs slot calculation and pushes targets to followers. */
 	/** 隊形システム。スロット算出と仲間への目標座標プッシュを担当。 */
 	UPROPERTY(VisibleAnywhere, Category="Formation")
-	TObjectPtr<UFormationFollowComponent> FormationComponent;
+	TObjectPtr<UFormationFollowComponent> FollowComponent;
+
+	UPROPERTY(VisibleAnywhere, Category="Formation")
+	TObjectPtr<UBattleFormationComponent> BattleComponent;
+	
+	
+	/** Detect Battle State by Leader - Enemy Distance. */
+	
+	// [임시 검증] 전투 전환 판단용 타겟. 나중에 [1] 적 감지로 대체.
+	UPROPERTY(EditAnywhere, Category="Formation|Debug")
+	TObjectPtr<AActor> DebugBattleTarget;
+
+	// 전투 진입 거리 (이보다 가까우면 Battle).
+	UPROPERTY(EditAnywhere, Category="Formation|Switching", meta=(ClampMin="0.0"))
+	float EnterBattleDistance = 700.f;
+
+	// 전투 이탈 거리 (이보다 멀면 Follow). Enter보다 커야 함 (히스테리시스).
+	UPROPERTY(EditAnywhere, Category="Formation|Switching", meta=(ClampMin="0.0"))
+	float ExitBattleDistance = 1000.f;
+
+private:
+	// "결정" — 거리 재서 모드 판단 후 SetFormationMode 호출.
+	// StateTree 이전 시 이 함수만 교체 (SetFormationMode는 그대로 생존).
+	void TickModeDecision();
 };
