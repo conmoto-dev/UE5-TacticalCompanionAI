@@ -7,9 +7,9 @@
 #include "PartyManager.generated.h"
 
 class APartyCharacter;
-class UFormationFollowComponent;
 class UFormationDataAsset;
-class UBattleFormationComponent;
+class UFormationFollowComponent;
+class UFormationBattleComponent;
 
 UENUM(BlueprintType)
 enum class EPartyFormationMode : uint8
@@ -73,7 +73,7 @@ protected:
 	TObjectPtr<UFormationFollowComponent> FollowComponent;
 
 	UPROPERTY(VisibleAnywhere, Category="Formation")
-	TObjectPtr<UBattleFormationComponent> BattleComponent;
+	TObjectPtr<UFormationBattleComponent> BattleComponent;
 	
 	
 	/** Detect Battle State by Leader - Enemy Distance. */

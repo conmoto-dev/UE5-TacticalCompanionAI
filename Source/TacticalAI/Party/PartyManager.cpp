@@ -3,7 +3,7 @@
 #include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
 #include "AI/Components/FormationFollowComponent.h"
-#include "AI/Components/BattleFormationComponent.h"
+#include "AI/Components/FormationBattleComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 APartyManager::APartyManager()
@@ -12,7 +12,7 @@ APartyManager::APartyManager()
 	PrimaryActorTick.bCanEverTick = true;
 	
 	FollowComponent = CreateDefaultSubobject<UFormationFollowComponent>(TEXT("FollowComp"));
-	BattleComponent = CreateDefaultSubobject<UBattleFormationComponent>(TEXT("BattleComp"));
+	BattleComponent = CreateDefaultSubobject<UFormationBattleComponent>(TEXT("BattleComp"));
 }
 
 void APartyManager::BeginPlay()

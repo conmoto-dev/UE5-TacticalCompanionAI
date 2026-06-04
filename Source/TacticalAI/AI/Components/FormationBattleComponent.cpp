@@ -1,21 +1,21 @@
-#include "AI/Components/BattleFormationComponent.h"
+#include "AI/Components/FormationBattleComponent.h"
 #include "AI/Strategies/SlotGeneratorStrategy.h"
 #include "Enemies/TargetDummy.h"   // TODO: 인터페이스로 분리 (구현체 2개째 생기면)
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
 #include "Characters/PartyCharacter.h"
 
-UBattleFormationComponent::UBattleFormationComponent()
+UFormationBattleComponent::UFormationBattleComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 }
-void UBattleFormationComponent::BeginPlay()
+void UFormationBattleComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	CurrentTarget = DebugTargetActor;
 }
 
-void UBattleFormationComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
@@ -55,7 +55,7 @@ void UBattleFormationComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 
 
-TOptional<FTransform> UBattleFormationComponent::GetFormationAnchor() const
+TOptional<FTransform> UFormationBattleComponent::GetFormationAnchor() const
 {
 	// 약참조 유효성 = 타겟 살아있음. 죽었으면 빈 Optional → 호출부가 파이프라인 정지.
 	if (const AActor* Target = CurrentTarget.Get())
@@ -65,7 +65,7 @@ TOptional<FTransform> UBattleFormationComponent::GetFormationAnchor() const
 	return TOptional<FTransform>();
 }
 
-float UBattleFormationComponent::ComputeBaseRadius() const
+float UFormationBattleComponent::ComputeBaseRadius() const
 {
 	float TargetRadius = 0.f;
 
@@ -81,7 +81,7 @@ float UBattleFormationComponent::ComputeBaseRadius() const
 
 // === 환경보정 파이프라인 (Follow 복사. 공통 부모 추출 시 통합 예정.) ===
 
-FVector UBattleFormationComponent::AdjustLocationForEnvironment(const FVector& IdealLocation, const FVector& AnchorOrigin) const
+FVector UFormationBattleComponent::AdjustLocationForEnvironment(const FVector& IdealLocation, const FVector& AnchorOrigin) const
 {
 	// [1] 슬로프 Z 보정.
 	FVector AdjustedIdeal = IdealLocation;
@@ -112,7 +112,7 @@ FVector UBattleFormationComponent::AdjustLocationForEnvironment(const FVector& I
 	return CalculateFallbackLocation(AnchorOrigin, IdealLocation);
 }
 
-bool UBattleFormationComponent::TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const
+bool UFormationBattleComponent::TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const
 {
 	UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld());
 	if (!NavSys) return false;
@@ -125,7 +125,7 @@ bool UBattleFormationComponent::TryProjectToNavMesh(const FVector& Point, FVecto
 	return false;
 }
 
-bool UBattleFormationComponent::TryFindGroundZ(const FVector& Point, float& OutZ) const
+bool UFormationBattleComponent::TryFindGroundZ(const FVector& Point, float& OutZ) const
 {
 	const FVector TraceStart = Point + FVector(0.f, 0.f, 500.f);
 	const FVector TraceEnd   = Point - FVector(0.f, 0.f, 500.f);
@@ -140,7 +140,7 @@ bool UBattleFormationComponent::TryFindGroundZ(const FVector& Point, float& OutZ
 	return false;
 }
 
-bool UBattleFormationComponent::TryCalculateWallSlide(const FVector& From, const FVector& To, FVector& OutSlidLocation) const
+bool UFormationBattleComponent::TryCalculateWallSlide(const FVector& From, const FVector& To, FVector& OutSlidLocation) const
 {
 	const float ChestHeight = 90.0f;
 	const FVector TraceStart = From + FVector(0.f, 0.f, ChestHeight);
@@ -169,7 +169,7 @@ bool UBattleFormationComponent::TryCalculateWallSlide(const FVector& From, const
 	return true;
 }
 
-FVector UBattleFormationComponent::CalculateFallbackLocation(const FVector& AnchorOrigin, const FVector& IdealLocation) const
+FVector UFormationBattleComponent::CalculateFallbackLocation(const FVector& AnchorOrigin, const FVector& IdealLocation) const
 {
 	const float TowDistance = 150.0f;
 	const FVector DirToAnchor = (AnchorOrigin - IdealLocation).GetSafeNormal2D();

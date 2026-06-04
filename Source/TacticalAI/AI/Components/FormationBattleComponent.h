@@ -1,8 +1,11 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "BattleFormationComponent.generated.h"
+#include "FormationBattleComponent.generated.h"
+
 
 class USlotGeneratorStrategy;
 class APartyCharacter;
@@ -16,12 +19,12 @@ class APartyCharacter;
  * 戦闘隊形コンポーネント（骨格）。anchor=ターゲット、スロット=手続き生成。
  */
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
-class TACTICALAI_API UBattleFormationComponent : public UActorComponent
+class TACTICALAI_API UFormationBattleComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UBattleFormationComponent();
+	UFormationBattleComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	virtual void BeginPlay() override;
