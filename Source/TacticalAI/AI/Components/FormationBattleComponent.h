@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "AI/Components/TacticalFormationComponent.h"
 #include "FormationBattleComponent.generated.h"
 
 
@@ -19,7 +20,7 @@ class APartyCharacter;
  * 戦闘隊形コンポーネント（骨格）。anchor=ターゲット、スロット=手続き生成。
  */
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
-class TACTICALAI_API UFormationBattleComponent : public UActorComponent
+class TACTICALAI_API UFormationBattleComponent : public UTacticalFormationComponent
 {
 	GENERATED_BODY()
 
@@ -63,12 +64,4 @@ private:
 
 	// 최종 반경 산출 (디자이너 기본 + 타겟 크기 보정). Strategy는 이 출처를 모른다.
 	float ComputeBaseRadius() const;
-	
-	
-	//Follow와 공통 로직
-	FVector AdjustLocationForEnvironment(const FVector& IdealLocation, const FVector& AnchorOrigin) const;
-	bool TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const;
-	bool TryFindGroundZ(const FVector& Point, float& OutZ) const;
-	bool TryCalculateWallSlide(const FVector& From, const FVector& To, FVector& OutSlidLocation) const;
-	FVector CalculateFallbackLocation(const FVector& AnchorOrigin, const FVector& IdealLocation) const;
 };

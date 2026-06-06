@@ -7,6 +7,7 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "AI/Strategies/YieldContextProvider.h"
 #include "AI/CrowdAvoidanceTypes.h"
+#include "AI/Components/TacticalFormationComponent.h"
 #include "FormationFollowComponent.generated.h"
 
 class UFormationDataAsset;
@@ -26,7 +27,7 @@ enum class ESlotYieldState : uint8
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class TACTICALAI_API UFormationFollowComponent : public UActorComponent, public IYieldContextProvider
+class TACTICALAI_API UFormationFollowComponent : public UTacticalFormationComponent, public IYieldContextProvider
 {
 	GENERATED_BODY()
 
@@ -118,32 +119,6 @@ private:
 
 	// 슬롯 메모리 재할당 방지용 캐시 버퍼 (매 틱 재사용).
 	TArray<FVector> CachedLocalSlots;
-
-
-	// =========================================================================
-	// Environment Adjustment (NavMesh, Slope, Wall Slide)
-	// Each helper is single-responsibility; AdjustLocation is a thin orchestrator.
-	// 各ヘルパーは単一責任、メイン関数は流れの調整役。
-	// =========================================================================
-private:
-	// 4-step orchestrator: ground Z → NavMesh project → wall slide → fallback.
-	FVector AdjustLocationForEnvironment(const FVector& IdealLocation, const AActor* CurrentLeader, const FVector& LeaderFootLoc) const;
-
-	// Project a point onto NavMesh. Writes OutResult only on success.
-	bool TryProjectToNavMesh(const FVector& Point, FVector& OutResult) const;
-
-	// Find actual ground Z at X,Y by vertical trace. Critical for slope-aware Z correction.
-	// スロットのローカルZ=0仮定が傾斜面で破綻するため、垂直トレースで実地面Zを取得。
-	bool TryFindGroundZ(const FVector& Point, float& OutZ, const AActor* IgnoreActor) const;
-
-	// Sliding position when blocked by vertical wall. Returns false for slopes (normal.Z above threshold).
-	// 法線で「壁」と「傾斜」を区別。傾斜面ではfalseを返しスライディング不要を通知。
-	bool TryCalculateWallSlide(const FVector& From, const FVector& To, const AActor* IgnoreActor, FVector& OutSlidLocation) const;
-
-	// Last-resort: tow slot toward leader so AIController->MoveTo doesn't break on invalid coords.
-	// 全失敗時の最終手段。無効座標でMoveToが失敗しないようリーダー方向へ引き戻し。
-	FVector CalculateFallbackLocation(const FVector& LeaderFootLoc, const FVector& IdealLocation) const;
-
 
 	// =========================================================================
 	// Auto Formation Switching (Corridor Width Measurement)
