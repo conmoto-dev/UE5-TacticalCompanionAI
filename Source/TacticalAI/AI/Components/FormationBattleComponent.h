@@ -46,17 +46,8 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "0.0"))
 	float DesignerBaseRadius = 200.f;
 
-	// 배치할 인원수 (지금은 고정 테스트값. 나중에 이 타겟에 할당된 동료 수로).
-	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "1", ClampMax = "8"))
-	int32 NumSlots = 3;
-
 	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
 	TWeakObjectPtr<AActor> CurrentTarget;
-
-	// DEBUG
-	// [임시 검증] 호로 보낼 동료들. 직접 할당. 스텝 7에서 Manager 연동으로 대체.
-	UPROPERTY(EditAnywhere, Category = "Battle|Debug")
-	TArray<TObjectPtr<APartyCharacter>> DebugCompanions;
 	
 private:
 	// [a] 기준 프레임. 타겟 유효하면 그 transform, 아니면 미반환(파이프라인 정지).

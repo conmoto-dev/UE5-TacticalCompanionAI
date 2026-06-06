@@ -27,9 +27,11 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	const FTransform& Anchor = AnchorOpt.GetValue();
 	const FVector AnchorOrigin = Anchor.GetLocation();
 	
+	TArray<APartyCharacter*> Followers = GetPartyFollowers();
+	
 	// [b] 로컬 슬롯 생성 (Strategy — 월드·타겟 무지).
 	TArray<FVector> LocalOffsets;
-	SlotGenerator->GenerateSlots(NumSlots, ComputeBaseRadius(), LocalOffsets);
+	SlotGenerator->GenerateSlots(Followers.Num(), ComputeBaseRadius(), LocalOffsets);
 
 	// [c] 로컬→월드 + 환경보정 + push.
 	for (int32 i = 0; i < LocalOffsets.Num(); ++i)
@@ -37,17 +39,15 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		const FVector World = Anchor.TransformPosition(LocalOffsets[i]);
 		const FVector Adjusted = AdjustLocationForEnvironment(World, AnchorOrigin);
 
-		// push: 인덱스순 단순 배정 (Hungarian은 스텝 9). 동료 부족하면 스킵.
-		if (DebugCompanions.IsValidIndex(i) && DebugCompanions[i])
+		// push: 인덱스순 단순 배정 (Hungarian은 나중). 동료 부족하면 스킵.
+		if (Followers.IsValidIndex(i) && Followers[i])
 		{
-			DebugCompanions[i]->UpdateTargetSlotLocation(Adjusted, false);
+			Followers[i]->UpdateTargetSlotLocation(Adjusted, false);
 		}
-
-		// [임시 드로우] 스텝 후반에 제거.
+		
 		DrawDebugSphere(GetWorld(), Adjusted, 30.f, 12, FColor::Cyan, false, -1.f, 0, 2.f);
 	}
-
-	// [임시] anchor forward 시각화.
+	
 	DrawDebugDirectionalArrow(GetWorld(), AnchorOrigin,
 		AnchorOrigin + Anchor.GetRotation().GetForwardVector() * 150.f,
 		60.f, FColor::Red, false, -1.f, 0, 3.f);

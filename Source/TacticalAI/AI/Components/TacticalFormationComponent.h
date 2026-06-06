@@ -6,6 +6,9 @@
 #include "Components/ActorComponent.h"
 #include "TacticalFormationComponent.generated.h"
 
+class APartyManager;
+class APartyCharacter;
+
 /**
  * 진형 컴포넌트 공통 부모 (추상).
  * Follow/Battle이 공유하는 기하 파이프라인(환경보정 등)을 점진적으로 여기 모은다.
@@ -19,6 +22,13 @@ class TACTICALAI_API UTacticalFormationComponent : public UActorComponent
 	GENERATED_BODY()
 	
 protected:
+	// ───── 공통 파티 접근 (Owner = PartyManager 전제) ─────
+	// Follow/Battle 둘 다 Manager에 부착되어 동료 목록을 받는다.
+	
+	APartyManager* GetOwningPartyManager() const;
+	
+	TArray<APartyCharacter*> GetPartyFollowers() const;
+	
 	// =========================================================================
 	// 공통 환경보정 파이프라인 (Follow/Battle 공유).
 	// 기준점은 AnchorOrigin (Follow=리더발밑, Battle=타겟위치)으로 통일.

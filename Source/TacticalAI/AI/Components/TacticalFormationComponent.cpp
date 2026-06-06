@@ -1,6 +1,22 @@
 #include "AI/Components/TacticalFormationComponent.h"
 #include "NavigationSystem.h"
 #include "Engine/World.h"
+#include "Party/PartyManager.h"
+#include "Characters/PartyCharacter.h" 
+
+APartyManager* UTacticalFormationComponent::GetOwningPartyManager() const
+{
+	return Cast<APartyManager>(GetOwner());
+}
+
+TArray<APartyCharacter*> UTacticalFormationComponent::GetPartyFollowers() const
+{
+	if (const APartyManager* Manager = GetOwningPartyManager())
+	{
+		return Manager->GetFollowers();
+	}
+	return TArray<APartyCharacter*>();
+}
 
 FVector UTacticalFormationComponent::AdjustLocationForEnvironment(const FVector& IdealLocation, const FVector& AnchorOrigin, const AActor* IgnoreActor) const
 {
