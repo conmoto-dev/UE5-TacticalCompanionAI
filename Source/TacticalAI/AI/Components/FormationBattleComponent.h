@@ -55,4 +55,20 @@ private:
 
 	// 최종 반경 산출 (디자이너 기본 + 타겟 크기 보정). Strategy는 이 출처를 모른다.
 	float ComputeBaseRadius() const;
+	
+protected:
+	// =========================================================================
+	// 슬롯 배정 저장 (진입 시 헝가리안으로 1회 결정, 전투 중 유지).
+	// 매 틱 재배정하면 동료들이 자리 바꾸려 갈팡질팡 → 진입 시점에만 확정.
+	// =========================================================================
+	// 戦闘中の再割当は仲間が右往左往する原因。進入時に一度だけ確定する。
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<APartyCharacter>> SlotAssignment;
+
+	// 재배정 필요 플래그. 전투 진입(Activate) 시 true.
+	bool bNeedsReassignment = true;
+
+public:
+	// 활성화 시 재배정 예약 (진입 트리거).
+	virtual void Activate(bool bReset = false) override;
 };

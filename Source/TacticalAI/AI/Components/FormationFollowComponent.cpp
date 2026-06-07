@@ -374,47 +374,22 @@ void UFormationFollowComponent::ApplyHungarianMatching()
 	const int32 N = SlotAssignment.Num();
 	if (N == 0 || N != CachedSlotLocations.Num()) return;
 
-	// Skip if any slot is empty (mid-sync transitional state).
-	// 過渡状態のスキップ。
-	for (int32 i = 0; i < N; ++i)
+	// SlotAssignment(멤버)와 슬롯 좌표를 부모 순수 함수에 넘기고 결과를 받음.
+	// 비용행렬 구축·헝가리안 호출은 부모가 담당 (Battle과 공유).
+	TArray<APartyCharacter*> Occupants;
+	Occupants.Reserve(N);
+	for (const TObjectPtr<APartyCharacter>& C : SlotAssignment)
 	{
-		if (!SlotAssignment[i]) return;
+		Occupants.Add(C);
 	}
 
-	// [1] Build cost matrix: distance from each occupant to each slot.
-	// コスト行列構築：各occupantから各スロットへの距離。
-	TArray<FCostMatrixRow> CostMatrix;
-	CostMatrix.Reserve(N);
-	for (int32 OccupantIdx = 0; OccupantIdx < N; ++OccupantIdx)
+	const TArray<APartyCharacter*> NewAssignment = SolveSlotAssignment(Occupants, CachedSlotLocations);
+	
+	SlotAssignment.Empty(N);
+	for (APartyCharacter* C : NewAssignment)
 	{
-		FCostMatrixRow Row;
-		Row.Values.Reserve(N);
-
-		const FVector OccupantLoc = SlotAssignment[OccupantIdx]->GetActorLocation();
-		for (int32 SlotIdx = 0; SlotIdx < N; ++SlotIdx)
-		{
-			Row.Values.Add(FVector::Dist(OccupantLoc, CachedSlotLocations[SlotIdx]));
-		}
-		CostMatrix.Add(Row);
+		SlotAssignment.Add(C);
 	}
-
-	// [2] Solve.
-	const TArray<int32> Assignment = UHungarianMatchingLibrary::SolveAssignment(CostMatrix);
-	if (Assignment.Num() != N) return;
-
-	// [3] Apply: Assignment[i]=j means occupant i moves to slot j.
-	// 割り当て適用：Assignment[i]=j ならoccupant iがスロットjへ。
-	TArray<TObjectPtr<APartyCharacter>> NewAssignment;
-	NewAssignment.Init(nullptr, N);
-	for (int32 OccupantIdx = 0; OccupantIdx < N; ++OccupantIdx)
-	{
-		const int32 NewSlotIdx = Assignment[OccupantIdx];
-		if (NewAssignment.IsValidIndex(NewSlotIdx))
-		{
-			NewAssignment[NewSlotIdx] = SlotAssignment[OccupantIdx];
-		}
-	}
-	SlotAssignment = NewAssignment;
 }
 
 void UFormationFollowComponent::HandleStopMatching(float DeltaTime, AActor* CurrentLeader)
