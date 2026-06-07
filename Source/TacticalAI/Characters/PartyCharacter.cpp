@@ -40,6 +40,12 @@ void APartyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 }
 
+void APartyCharacter::InvalidateMoveCache()
+{
+	// 캐시를 도달 불가능한 값으로 → 다음 명령이 반드시 threshold 초과 → 강제 재발행.
+	CurrentTargetLocation = FVector(FLT_MAX);
+}
+
 void APartyCharacter::UpdateTargetSlotLocation(const FVector& NewTarget, bool bForceRefresh)
 {
 	AAIController* AIC = Cast<AAIController>(GetController());

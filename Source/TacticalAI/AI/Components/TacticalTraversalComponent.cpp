@@ -300,6 +300,13 @@ void UTacticalTraversalComponent::OnLanded(const FHitResult& Hit)
 
     CurrentState = ETraversalState::Idle;
     TimeSpentAirborne = 0.f;
+    
+    // 점프 중 이동 명령이 물리에 묻혔으므로 캐시 무효화 → 착지 후 슬롯으로 재이동 보장.
+    // ジャンプ中の移動命令は物理に飲まれたため、キャッシュを無効化し着地後の復帰を保証。
+    if (APartyCharacter* PC = Cast<APartyCharacter>(GetOwner()))
+    {
+        PC->InvalidateMoveCache();
+    }
 }
 
 void UTacticalTraversalComponent::AbortTraversal()

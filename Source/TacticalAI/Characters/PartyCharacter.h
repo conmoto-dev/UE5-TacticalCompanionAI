@@ -38,6 +38,10 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	
+	// 이동 명령 캐시 무효화. 다음 UpdateTargetSlotLocation이 dedup 없이 강제 재발행.
+	// traversal·스턴 등 이동을 일시 가로챈 기능이 *끝날 때* 호출 → 슬롯 복귀 보장.
+	// 移動を一時的に奪った機能（traversal等）が終了時に呼ぶ。着地後のスロット復帰を保証。
+	void InvalidateMoveCache();
 private:
 	// Last target sent to AIController. Used for threshold-based MoveTo deduplication.
 	// AIControllerに最後に渡した目標。重複MoveTo抑制用キャッシュ。
