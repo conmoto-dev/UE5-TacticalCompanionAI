@@ -6,6 +6,7 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "AI/Components/PlayerCrowdAgentComponent.h"
+#include "AI/CombatRoleTags.h"
 
 APartyCharacter::APartyCharacter()
 {
@@ -22,6 +23,9 @@ APartyCharacter::APartyCharacter()
 	GetMesh()->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	
 	PlayerAgentComp = CreateDefaultSubobject<UPlayerCrowdAgentComponent>(TEXT("PlayerAgentComp"));
+	
+	// 역할 기본값. 헤더 초기화 불가(Native Tag는 모듈 로드 후 유효)라 생성자에서 대입.
+	CombatRole = CombatRoleTags::Melee;
 }
 
 void APartyCharacter::BeginPlay()

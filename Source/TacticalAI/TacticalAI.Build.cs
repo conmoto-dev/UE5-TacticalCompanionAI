@@ -21,7 +21,8 @@ public class TacticalAI : ModuleRules
 			"Slate",
 			"AIModule",          // AIController 위해
 			"NavigationSystem",  // NavMesh 쿼리 위해 (이미 쓰고 있음)
-			"GameplayTasks"      // AI Tasks 위해
+			"GameplayTasks",      // AI Tasks 위해
+			"GameplayTags"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

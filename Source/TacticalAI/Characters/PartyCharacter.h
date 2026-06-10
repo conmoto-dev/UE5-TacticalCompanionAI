@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "TacticalAICharacter.h"
 #include "PartyCharacter.generated.h"
 
@@ -60,4 +61,15 @@ private:
 	
 	UPROPERTY(VisibleAnywhere, Category="Tactical AI")
 	TObjectPtr<class UPlayerCrowdAgentComponent> PlayerAgentComp;
+	
+	
+public:
+	// 전투 포지셔닝 역할 조회. BattleComponent가 그룹 분류에 사용.
+	// 戦闘ポジショニングの役割を返す。
+	FGameplayTag GetCombatRole() const { return CombatRole; }
+private:
+	// 전투 시 포지셔닝 역할. Role.Combat 아래 태그만 선택 가능. 기본 Melee(생성자).
+	// 戦闘時のポジショニング役割。Role.Combat配下のみ選択可。
+	UPROPERTY(EditAnywhere, Category="Combat", meta=(Categories="Role.Combat"))
+	FGameplayTag CombatRole;
 };
