@@ -3,7 +3,16 @@
 #include "Enemies/TargetDummy.h"   // TODO: 인터페이스로 분리 (구현체 2개째 생기면)
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
+#include "AI/CombatRoleTags.h"
 #include "Characters/PartyCharacter.h"
+
+
+// 그룹 구분용 디버그 색상. 그룹 순회 인덱스로 팔레트 순환 — 디버그 전용.
+static FColor GroupDebugColor(int32 GroupIndex)
+{
+	static const FColor Palette[] = { FColor::Cyan, FColor::Orange, FColor::Green, FColor::Yellow };
+	return Palette[GroupIndex % UE_ARRAY_COUNT(Palette)];
+}
 
 UFormationBattleComponent::UFormationBattleComponent()
 {
@@ -28,9 +37,9 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	// [1] anchor 획득. 타겟 소멸 시 파이프라인 정지.
+	//     지금 단계에선 모든 그룹이 타겟 기준 anchor를 공유 (Ranged 전용 산정은 조각 3~4에서).
 	const TOptional<FTransform> AnchorOpt = GetFormationAnchor();
 	if (!AnchorOpt.IsSet()) return;
-	if (!SlotGenerator) return;
 
 	const FTransform& Anchor = AnchorOpt.GetValue();
 	const FVector AnchorOrigin = Anchor.GetLocation();
@@ -38,46 +47,101 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	TArray<APartyCharacter*> Followers = GetPartyFollowers();
 	if (Followers.Num() == 0) return;
 
-	// [2] 슬롯 로컬 생성 → 월드 변환 + 환경보정. (매 틱 — 타겟이 움직이므로)
-	TArray<FVector> LocalOffsets;
-	SlotGenerator->GenerateSlots(Followers.Num(), ComputeBaseRadius(), LocalOffsets);
-
-	TArray<FVector> WorldSlots;
-	WorldSlots.Reserve(LocalOffsets.Num());
-	for (const FVector& Local : LocalOffsets)
+	// [2] 역할 분류. 태그 미지정·설정 미등록은 Melee로 폴백.
+	//     경고 로그는 재배정 시점에만.
+	// 役割分類。未設定はMeleeへフォールバック（警告は再割当時のみ）。
+	TMap<FGameplayTag, TArray<APartyCharacter*>> GroupedFollowers;
+	for (APartyCharacter* Follower : Followers)
 	{
-		const FVector World = Anchor.TransformPosition(Local);
-		WorldSlots.Add(AdjustLocationForEnvironment(World, AnchorOrigin));
-	}
-
-	// [3] 배정: 진입 시 1회만 헝가리안. 이후엔 저장된 배정 유지.
-	// 진입 직후엔 동료 현재 위치 기준 최적 배정 → 교차 이동 최소화.
-	// 進入時のみ割当。以降は保持。
-	if (bNeedsReassignment || SlotAssignment.Num() != Followers.Num())
-	{
-		const TArray<APartyCharacter*> Assigned = SolveSlotAssignment(Followers, WorldSlots);
-		SlotAssignment.Empty(Assigned.Num());
-		for (APartyCharacter* C : Assigned)
+		FGameplayTag Role = Follower->GetCombatRole();
+		if (!Role.IsValid() || FindConfigForRole(Role) == nullptr)
 		{
-			SlotAssignment.Add(C);
+			if (bNeedsReassignment)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[BattleFormation] %s: 역할 '%s' 설정 없음 -> Melee 폴백"),
+					*GetNameSafe(Follower), *Role.ToString());
+			}
+			Role = CombatRoleTags::Melee;
 		}
-		bNeedsReassignment = false;
+		GroupedFollowers.FindOrAdd(Role).Add(Follower);
 	}
 
-	// [4] 저장된 배정대로 push. SlotAssignment[i] = 슬롯 i에 갈 동료.
-	for (int32 i = 0; i < WorldSlots.Num() && i < SlotAssignment.Num(); ++i)
+	// [3] 그룹별 독립 파이프라인: 슬롯 생성 → 환경보정 → (진입 시) 헝가리안 → push.
+	//     비용행렬이 그룹 안에 갇힘 → 역할 교차 배정 구조적 불가.
+	// グループ毎の独立パイプライン。コスト行列が混ざらない＝役割交差割当は不可能。
+	int32 GroupIndex = 0;
+	for (auto& [Role, GroupMembers] : GroupedFollowers)
 	{
-		if (SlotAssignment[i])
+		const FRoleSlotConfig* Config = FindConfigForRole(Role);
+		if (!Config || !Config->SlotGenerator)
 		{
-			SlotAssignment[i]->UpdateTargetSlotLocation(WorldSlots[i], false);
+			++GroupIndex;
+			continue;
 		}
 
-		DrawDebugSphere(GetWorld(), WorldSlots[i], 30.f, 12, FColor::Cyan, false, -1.f, 0, 2.f);
+		// [3a] Context 조립 → 슬롯 생성(월드 좌표) → 환경보정. (매 틱 — 타겟이 움직이므로)
+		//      반경 해석·anchor 사용 방식은 Strategy 소관. 환경보정은 공통 파이프라인 소관.
+		// Context組立→スロット生成（ワールド座標）→環境補正。補正は共通パイプラインの責務。
+		FSlotGenContext SlotGenContext;
+		SlotGenContext.NumSlots = GroupMembers.Num();
+		SlotGenContext.BaseRadius = ComputeBaseRadius() + Config->RadiusOffset;
+		SlotGenContext.Anchor = Anchor;
+		SlotGenContext.PrimaryTarget = CurrentTarget.Get();
+		// PerceivedEnemies: 적 수집 주체(컴포넌트 vs Manager)는 조각 4 서두에서 결정 — 지금은 빈 배열.
+		SlotGenContext.World = GetWorld();
+
+		TArray<FVector> WorldSlots;
+		Config->SlotGenerator->GenerateSlots(SlotGenContext, WorldSlots);
+
+		for (FVector& SlotLocation : WorldSlots)
+		{
+			SlotLocation = AdjustLocationForEnvironment(SlotLocation, AnchorOrigin);
+		}
+
+		// [3b] 배정: 진입 시 그룹별 1회 헝가리안. 그룹 인원 변동 시에도 재배정.
+		// 進入時のみグループ単位でハンガリアン。人数変動時も再割当。
+		FRoleGroupRuntime& Runtime = RuntimeGroups.FindOrAdd(Role);
+		if (bNeedsReassignment || Runtime.SlotAssignment.Num() != GroupMembers.Num())
+		{
+			const TArray<APartyCharacter*> Assigned = SolveSlotAssignment(GroupMembers, WorldSlots);
+			Runtime.SlotAssignment.Empty(Assigned.Num());
+			for (APartyCharacter* Character : Assigned)
+			{
+				Runtime.SlotAssignment.Add(Character);
+			}
+		}
+
+		// [3c] 저장된 배정대로 push. SlotAssignment[i] = 슬롯 i에 갈 동료.
+		for (int32 i = 0; i < WorldSlots.Num() && i < Runtime.SlotAssignment.Num(); ++i)
+		{
+			if (APartyCharacter* Character = Runtime.SlotAssignment[i].Get())
+			{
+				Character->UpdateTargetSlotLocation(WorldSlots[i], false);
+			}
+
+			DrawDebugSphere(GetWorld(), WorldSlots[i], 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
+		}
+
+		++GroupIndex;
 	}
+
+	// [4] 재배정 플래그는 모든 그룹 처리 후 일괄 해제.
+	//     그룹 루프 안에서 끄면 뒤 그룹이 플래그를 못 보고 재배정을 건너뛴다.
+	// フラグ解除は全グループ処理後。ループ内で消すと後続グループが再割当を逃す。
+	bNeedsReassignment = false;
 
 	DrawDebugDirectionalArrow(GetWorld(), AnchorOrigin,
 		AnchorOrigin + Anchor.GetRotation().GetForwardVector() * 150.f,
 		60.f, FColor::Red, false, -1.f, 0, 3.f);
+}
+
+const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGameplayTag& Role) const
+{
+	// 설정 엔트리는 역할당 2~4개 수준 — 선형 탐색으로 충분.
+	return RoleSlotConfigs.FindByPredicate([&Role](const FRoleSlotConfig& Config)
+	{
+		return Config.Role == Role;
+	});
 }
 
 
