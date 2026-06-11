@@ -53,6 +53,16 @@ APartyCharacter* APartyManager::GetLeader() const
 	return Members[CurrentLeaderIndex];
 }
 
+void APartyManager::SwapLeader(int32 NewLeaderIndex)
+{
+	if (NewLeaderIndex == CurrentLeaderIndex) return;
+	if (!Members.IsValidIndex(NewLeaderIndex)) return;
+
+	// Actual controller swap logic comes in a later step.
+	// For now we just update the index.
+	CurrentLeaderIndex = NewLeaderIndex;
+}
+
 TArray<APartyCharacter*> APartyManager::GetFollowers() const
 {
 	TArray<APartyCharacter*> Result;
@@ -64,15 +74,22 @@ TArray<APartyCharacter*> APartyManager::GetFollowers() const
 	return Result;
 }
 
-void APartyManager::SwapLeader(int32 NewLeaderIndex)
+TArray<AActor*> APartyManager::GetPerceivedEnemies() const
 {
-	if (NewLeaderIndex == CurrentLeaderIndex) return;
-	if (!Members.IsValidIndex(NewLeaderIndex)) return;
-
-	// Actual controller swap logic comes in a later step.
-	// For now we just update the index.
-	CurrentLeaderIndex = NewLeaderIndex;
+	// IsValid 필터 — 에디터 지정 적이 런타임에 파괴될 수 있음 (처치 등).
+	// 호출자는 항상 살아있는 적만 받는다는 계약.
+	TArray<AActor*> Result;
+	Result.Reserve(DebugPerceivedEnemies.Num());
+	for (AActor* Enemy : DebugPerceivedEnemies)
+	{
+		if (IsValid(Enemy))
+		{
+			Result.Add(Enemy);
+		}
+	}
+	return Result;
 }
+
 
 //** Formation Change Algorithm *//
 void APartyManager::SetFormationMode(EPartyFormationMode NewMode)
@@ -91,17 +108,27 @@ void APartyManager::SetFormationMode(EPartyFormationMode NewMode)
 void APartyManager::TickModeDecision()
 {
 	const APartyCharacter* Leader = GetLeader();
-	const AActor* Target = DebugBattleTarget;
-	if (!Leader || !Target) return; // 타겟 없으면 판단 안 함 (현 모드 유지)
+	if (!Leader) return;
 
-	const float DistSq = FVector::DistSquared(Leader->GetActorLocation(), Target->GetActorLocation());
+	// [1] 최근접 적과의 거리 산출. 적이 하나도 없으면 판단 안 함 (현 모드 유지).
+	//     모드 판단 기준은 리더(=플레이어) — 동료가 아니라 플레이어의 교전 상태가 파티 모드를 결정.
+	// 判断基準はリーダー（＝プレイヤー）。プレイヤーの交戦状態がパーティのモードを決める。
+	float NearestDistSq = TNumericLimits<float>::Max();
+	bool bAnyEnemy = false;
+	for (const AActor* Enemy : GetPerceivedEnemies())
+	{
+		NearestDistSq = FMath::Min(NearestDistSq,
+			FVector::DistSquared(Leader->GetActorLocation(), Enemy->GetActorLocation()));
+		bAnyEnemy = true;
+	}
+	if (!bAnyEnemy) return;
 
-	// 히스테리시스: 진입은 가까이, 이탈은 멀리. 사이 구간은 현상유지(깜빡임 방지).
-	if (DistSq < FMath::Square(EnterBattleDistance))
+	// [2] 히스테리시스: 진입은 가까이, 이탈은 멀리. 사이 구간은 현상유지(깜빡임 방지).
+	if (NearestDistSq < FMath::Square(EnterBattleDistance))
 	{
 		SetFormationMode(EPartyFormationMode::Battle);
 	}
-	else if (DistSq > FMath::Square(ExitBattleDistance))
+	else if (NearestDistSq > FMath::Square(ExitBattleDistance))
 	{
 		SetFormationMode(EPartyFormationMode::Follow);
 	}

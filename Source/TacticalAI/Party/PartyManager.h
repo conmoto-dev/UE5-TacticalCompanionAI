@@ -66,6 +66,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Formation")
 	void SetFormationMode(EPartyFormationMode NewMode);
 
+	/** 인지한 적 전체 조회 (유효한 것만). 모드 결정·포메이션·추후 타겟팅이 공유하는 단일 소스. */
+	/** 知覚した敵全体を返す。モード判断・隊形・将来のターゲティングが共有する単一ソース。 */
+	TArray<AActor*> GetPerceivedEnemies() const;
+	
 protected:
 	/** Formation system component. Performs slot calculation and pushes targets to followers. */
 	/** 隊形システム。スロット算出と仲間への目標座標プッシュを担当。 */
@@ -75,12 +79,13 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category="Formation")
 	TObjectPtr<UFormationBattleComponent> BattleComponent;
 	
-	
-	/** Detect Battle State by Leader - Enemy Distance. */
-	
-	// [임시 검증] 전투 전환 판단용 타겟. 나중에 [1] 적 감지로 대체.
+	/** Detect Battle State by Leader - Nearest Enemy Distance. */
+
+	// [임시 검증] 인지한 적 목록. 에디터에서 수동 지정.
+	// 나중에 [1] 적 감지(Perception)로 내부 구현만 대체 — GetPerceivedEnemies API는 유지.
+	// [仮] 知覚した敵リスト。後でPerceptionに差し替えるが、APIは維持する。
 	UPROPERTY(EditAnywhere, Category="Formation|Debug")
-	TObjectPtr<AActor> DebugBattleTarget;
+	TArray<TObjectPtr<AActor>> DebugPerceivedEnemies;
 
 	// 전투 진입 거리 (이보다 가까우면 Battle).
 	UPROPERTY(EditAnywhere, Category="Formation|Switching", meta=(ClampMin="0.0"))

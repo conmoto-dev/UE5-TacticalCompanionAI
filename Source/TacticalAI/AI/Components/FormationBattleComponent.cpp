@@ -4,6 +4,7 @@
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
 #include "AI/CombatRoleTags.h"
+#include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
 
 
@@ -37,7 +38,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	// [1] anchor 획득. 타겟 소멸 시 파이프라인 정지.
-	//     지금 단계에선 모든 그룹이 타겟 기준 anchor를 공유 (Ranged 전용 산정은 조각 3~4에서).
+	//     지금 단계에선 모든 그룹이 타겟 기준 anchor를 공유 (Ranged 전용 산정은 RangedSafe Strategy에서).
 	const TOptional<FTransform> AnchorOpt = GetFormationAnchor();
 	if (!AnchorOpt.IsSet()) return;
 
@@ -47,7 +48,18 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	TArray<APartyCharacter*> Followers = GetPartyFollowers();
 	if (Followers.Num() == 0) return;
 
-	// [2] 역할 분류. 태그 미지정·설정 미등록은 Melee로 폴백.
+	// [2] 인지한 적 목록 수집. Manager가 단일 소스 — 그룹 무관이라 루프 밖에서 1회.
+	// 知覚した敵リストはManagerが単一ソース。グループ非依存なのでループ外で一度だけ取得。
+	TArray<TWeakObjectPtr<const AActor>> PerceivedEnemies;
+	if (const APartyManager* Manager = GetOwningPartyManager())
+	{
+		for (const AActor* Enemy : Manager->GetPerceivedEnemies())
+		{
+			PerceivedEnemies.Add(Enemy);
+		}
+	}
+
+	// [3] 역할 분류. 태그 미지정·설정 미등록은 Melee로 폴백.
 	//     경고 로그는 재배정 시점에만.
 	// 役割分類。未設定はMeleeへフォールバック（警告は再割当時のみ）。
 	TMap<FGameplayTag, TArray<APartyCharacter*>> GroupedFollowers;
@@ -66,7 +78,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		GroupedFollowers.FindOrAdd(Role).Add(Follower);
 	}
 
-	// [3] 그룹별 독립 파이프라인: 슬롯 생성 → 환경보정 → (진입 시) 헝가리안 → push.
+	// [4] 그룹별 독립 파이프라인: 슬롯 생성 → 환경보정 → (진입 시) 헝가리안 → push.
 	//     비용행렬이 그룹 안에 갇힘 → 역할 교차 배정 구조적 불가.
 	// グループ毎の独立パイプライン。コスト行列が混ざらない＝役割交差割当は不可能。
 	int32 GroupIndex = 0;
@@ -79,7 +91,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			continue;
 		}
 
-		// [3a] Context 조립 → 슬롯 생성(월드 좌표) → 환경보정. (매 틱 — 타겟이 움직이므로)
+		// [4a] Context 조립 → 슬롯 생성(월드 좌표) → 환경보정. (매 틱 — 타겟이 움직이므로)
 		//      반경 해석·anchor 사용 방식은 Strategy 소관. 환경보정은 공통 파이프라인 소관.
 		// Context組立→スロット生成（ワールド座標）→環境補正。補正は共通パイプラインの責務。
 		FSlotGenContext SlotGenContext;
@@ -87,7 +99,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		SlotGenContext.BaseRadius = ComputeBaseRadius() + Config->RadiusOffset;
 		SlotGenContext.Anchor = Anchor;
 		SlotGenContext.PrimaryTarget = CurrentTarget.Get();
-		// PerceivedEnemies: 적 수집 주체(컴포넌트 vs Manager)는 조각 4 서두에서 결정 — 지금은 빈 배열.
+		SlotGenContext.PerceivedEnemies = PerceivedEnemies;
 		SlotGenContext.World = GetWorld();
 
 		TArray<FVector> WorldSlots;
@@ -98,7 +110,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			SlotLocation = AdjustLocationForEnvironment(SlotLocation, AnchorOrigin);
 		}
 
-		// [3b] 배정: 진입 시 그룹별 1회 헝가리안. 그룹 인원 변동 시에도 재배정.
+		// [4b] 배정: 진입 시 그룹별 1회 헝가리안. 그룹 인원 변동 시에도 재배정.
 		// 進入時のみグループ単位でハンガリアン。人数変動時も再割当。
 		FRoleGroupRuntime& Runtime = RuntimeGroups.FindOrAdd(Role);
 		if (bNeedsReassignment || Runtime.SlotAssignment.Num() != GroupMembers.Num())
@@ -111,7 +123,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			}
 		}
 
-		// [3c] 저장된 배정대로 push. SlotAssignment[i] = 슬롯 i에 갈 동료.
+		// [4c] 저장된 배정대로 push. SlotAssignment[i] = 슬롯 i에 갈 동료.
 		for (int32 i = 0; i < WorldSlots.Num() && i < Runtime.SlotAssignment.Num(); ++i)
 		{
 			if (APartyCharacter* Character = Runtime.SlotAssignment[i].Get())
@@ -125,8 +137,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		++GroupIndex;
 	}
 
-	// [4] 재배정 플래그는 모든 그룹 처리 후 일괄 해제.
-	//     그룹 루프 안에서 끄면 뒤 그룹이 플래그를 못 보고 재배정을 건너뛴다.
+	// [5] 재배정 플래그는 모든 그룹 처리 후 일괄 해제.
 	// フラグ解除は全グループ処理後。ループ内で消すと後続グループが再割当を逃す。
 	bNeedsReassignment = false;
 
@@ -134,6 +145,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		AnchorOrigin + Anchor.GetRotation().GetForwardVector() * 150.f,
 		60.f, FColor::Red, false, -1.f, 0, 3.f);
 }
+
 
 const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGameplayTag& Role) const
 {
@@ -143,7 +155,6 @@ const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGamep
 		return Config.Role == Role;
 	});
 }
-
 
 TOptional<FTransform> UFormationBattleComponent::GetFormationAnchor() const
 {
