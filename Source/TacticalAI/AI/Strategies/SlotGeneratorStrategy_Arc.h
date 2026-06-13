@@ -23,5 +23,5 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Arc", meta = (ClampMin = "0.0", ClampMax = "360.0"))
 	float ArcAngleDeg = 120.f;
 
-	virtual void GenerateSlots(const FSlotGenContext& Context, TArray<FVector>& OutSlotLocations) const override;
+	virtual FVector GenerateSlot(const FSlotGenContext& Context) const override;
 };

@@ -91,23 +91,29 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			continue;
 		}
 
-		// [4a] Context 조립 → 슬롯 생성(월드 좌표) → 환경보정. (매 틱 — 타겟이 움직이므로)
-		//      반경 해석·anchor 사용 방식은 Strategy 소관. 환경보정은 공통 파이프라인 소관.
-		// Context組立→スロット生成（ワールド座標）→環境補正。補正は共通パイプラインの責務。
-		FSlotGenContext SlotGenContext;
-		SlotGenContext.NumSlots = GroupMembers.Num();
-		SlotGenContext.BaseRadius = ComputeBaseRadius() + Config->RadiusOffset;
-		SlotGenContext.Anchor = Anchor;
-		SlotGenContext.PrimaryTarget = CurrentTarget.Get();
-		SlotGenContext.PerceivedEnemies = PerceivedEnemies;
-		SlotGenContext.World = GetWorld();
+		// [4a] 멤버별로 Context 조립 → 슬롯 1개 생성(월드 좌표) → 환경보정.
+		//      순회는 여기(컴포넌트)가 돈다 — 멤버를 아는 주체가 순회하고 Strategy는 1인분만 답한다.
+		//      집합형(Arc)은 TotalSlots·SlotIndex로, 개별형(RangedSafe)은 AttackRange·적분포로 계산.
+		// メンバーを知る側が巡回し、Strategyは1人分のみ。集合型はN・index、個別型は射程・敵分布で算出。
+		const float GroupBaseRadius = ComputeBaseRadius() + Config->RadiusOffset;
 
 		TArray<FVector> WorldSlots;
-		Config->SlotGenerator->GenerateSlots(SlotGenContext, WorldSlots);
+		WorldSlots.Reserve(GroupMembers.Num());
 
-		for (FVector& SlotLocation : WorldSlots)
+		for (int32 MemberIndex = 0; MemberIndex < GroupMembers.Num(); ++MemberIndex)
 		{
-			SlotLocation = AdjustLocationForEnvironment(SlotLocation, AnchorOrigin);
+			FSlotGenContext SlotGenContext;
+			SlotGenContext.TotalSlots = GroupMembers.Num();
+			SlotGenContext.SlotIndex = MemberIndex;
+			SlotGenContext.BaseRadius = GroupBaseRadius;
+			SlotGenContext.Anchor = Anchor;
+			SlotGenContext.AttackRange = GroupMembers[MemberIndex]->GetAttackRange();
+			SlotGenContext.PrimaryTarget = CurrentTarget.Get();
+			SlotGenContext.PerceivedEnemies = PerceivedEnemies;
+			SlotGenContext.World = GetWorld();
+
+			const FVector RawSlot = Config->SlotGenerator->GenerateSlot(SlotGenContext);
+			WorldSlots.Add(AdjustLocationForEnvironment(RawSlot, AnchorOrigin));
 		}
 
 		// [4b] 배정: 진입 시 그룹별 1회 헝가리안. 그룹 인원 변동 시에도 재배정.

@@ -67,9 +67,19 @@ public:
 	// 전투 포지셔닝 역할 조회. BattleComponent가 그룹 분류에 사용.
 	// 戦闘ポジショニングの役割を返す。
 	FGameplayTag GetCombatRole() const { return CombatRole; }
+	
+	// 이 캐릭터의 기준 교전 사거리 조회. 슬롯 생성 시 Context로 전달된다.
+	// 戦闘の基準射程を返す。スロット生成時にContextへ渡る。
+	float GetAttackRange() const { return AttackRange; }
 private:
 	// 전투 시 포지셔닝 역할. Role.Combat 아래 태그만 선택 가능. 기본 Melee(생성자).
 	// 戦闘時のポジショニング役割。Role.Combat配下のみ選択可。
 	UPROPERTY(EditAnywhere, Category="Combat", meta=(Categories="Role.Combat"))
 	FGameplayTag CombatRole;
+	
+	// 기준 교전 사거리. 원거리 안전 위치 계산의 기준 거리.
+	// 디폴트 평타 기준값 — 스킬별 사거리는 추후 행동 레이어에서 덮어쓴다.
+	// 基準射程。遠距離の安全位置算出の基準。スキル別射程は後の行動レイヤーで上書き。
+	UPROPERTY(EditAnywhere, Category="Combat", meta=(ClampMin="0.0"))
+	float AttackRange = 100.f;
 };
