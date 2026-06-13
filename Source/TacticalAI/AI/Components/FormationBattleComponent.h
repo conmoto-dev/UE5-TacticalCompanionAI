@@ -36,6 +36,12 @@ struct FRoleSlotConfig
 	// 기본 반경에 더할 역할별 오프셋. 원거리는 양수로 멀리 세움. / 基本半径への役割別オフセット。
 	UPROPERTY(EditAnywhere, Category = "Battle")
 	float RadiusOffset = 0.f;
+	
+	// 그룹 배치 순서. 낮을수록 먼저 자리를 잡음 (먼저 잡은 슬롯이 점유로 누적됨).
+	// 이 순서는 "근접이 전선을 먼저 형성하고 원거리가 그 뒤 안전 위치를 고른다"는 게임 디자인
+	// 配置順序は設計意図。近接が前線を作り、遠隔がその後ろに位置する。
+	UPROPERTY(EditAnywhere)
+	int32 PlacementPriority = 0;
 };
 
 // 역할군별 런타임 상태 (헝가리안 배정 결과 유지).

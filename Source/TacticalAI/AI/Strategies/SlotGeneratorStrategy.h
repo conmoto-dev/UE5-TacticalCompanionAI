@@ -7,6 +7,24 @@
 class AActor;
 
 // =========================================================================
+// 슬롯 배정 정책. Strategy가 "내 슬롯을 멤버에게 어떻게 나눠줄지"를 선언한다.
+// 배정 방식은 생성 방식의 따름정리 — 생성 주체(Strategy)가 함께 선언해야
+// 모순 조합(집합 생성 + 항등 배정 등)이 타입 레벨에서 불가능해진다.
+// 실행(헝가리안 호출)은 컴포넌트 소관 — Strategy는 선언만, 컴포넌트가 분기.
+// =========================================================================
+// スロット割当方針。Strategyが「自分のスロットをどう配るか」を宣言。
+// 割当は生成の従系 — 生成主体が宣言することで矛盾組合せを型レベルで排除。
+// 実行(ハンガリアン呼出)はコンポーネント側。Strategyは宣言のみ。
+UENUM(BlueprintType)
+enum class ESlotAssignmentPolicy : uint8
+{
+	GroupHungarian,
+
+	// 멤버 1명 기준으로 슬롯 생성 → 슬롯이 곧 그 멤버의 것 (항등 배정, 헝가리안 불필요).
+	MemberSpecific
+};
+
+// =========================================================================
 // 슬롯 생성 입력 컨텍스트.
 // 계약은 "1인 → 1슬롯". 멤버 순회는 호출자(컴포넌트)가 돌고, Strategy는 1건만 답한다.
 // 집합형(Arc)은 TotalSlots·SlotIndex로 자기 위치를 계산하고,
@@ -50,6 +68,20 @@ struct FSlotGenContext
 	// 知覚した敵全体（ターゲット含む）。遠距離の安全位置評価の中核入力。
 	TArray<TWeakObjectPtr<const AActor>> PerceivedEnemies;
 
+	// 이미 배치 확정된 슬롯들 (이 그룹 이전 + 이 그룹 내 앞선 멤버).
+	// 원거리 평가가 "이미 찬 자리"를 피하기 위한 입력. 모든 Strategy 공통 — 단,
+	// 점유 회피의 "소프트 선호"는 각 Strategy 점수에서, "최소 거리 하드 보장"은
+	// 컴포넌트 공통 후처리(push)에서. Strategy가 제멋대로 무시하면 순서 의존 버그.
+	// 既に確定したスロット群。遠距離評価が「埋まった位置」を避けるための入力。
+	// ソフトな回避は各Strategyのスコア、ハードな最小距離保証はコンポーネント側で。
+	TArray<FVector> OccupiedSlots;
+	
+	// 이 슬롯을 요청한 멤버의 현재 위치. 개별형이 "나"를 기준으로 평가할 때 사용.
+	// (Stickiness: 현재 위치가 충분히 좋으면 안 움직임 / 접근성: 후보까지 이동 거리.)
+	// 집합형(Arc)은 멤버 개체와 무관하게 anchor·index로만 배치하므로 무시.
+	// このスロットを要求したメンバーの現在位置。個別型が「自分」基準で評価する際に使用。
+	FVector RequesterLocation = FVector::ZeroVector;
+	
 	// 명시 전달 — Instanced UObject는 Outer 체인으로 GetWorld() 불가.
 	// Instanced UObjectはOuter経由でGetWorld()不可のため明示的に渡す。
 	UWorld* World = nullptr;
@@ -78,4 +110,15 @@ public:
 	 */
 	virtual FVector GenerateSlot(const FSlotGenContext& Context) const
 		PURE_VIRTUAL(USlotGeneratorStrategy::GenerateSlot, return FVector::ZeroVector;);
+	
+	/**
+	 * 이 Strategy의 슬롯을 멤버에게 배정하는 방식. 기본은 집합형(헝가리안).
+	 * 멤버별 생성 Strategy만 MemberSpecific으로 override.
+	 * 생성 방식과 짝이므로 Strategy가 선언 — 컴포넌트가 이걸 읽어 배정을 분기한다.
+	 */
+	// このStrategyのスロット割当方式。デフォルトは集合型(ハンガリアン)。
+	virtual ESlotAssignmentPolicy GetAssignmentPolicy() const
+	{
+		return ESlotAssignmentPolicy::GroupHungarian;
+	}
 };

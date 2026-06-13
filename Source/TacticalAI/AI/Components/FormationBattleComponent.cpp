@@ -78,12 +78,38 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		GroupedFollowers.FindOrAdd(Role).Add(Follower);
 	}
 
-	// [4] 그룹별 독립 파이프라인: 슬롯 생성 → 환경보정 → (진입 시) 헝가리안 → push.
-	//     비용행렬이 그룹 안에 갇힘 → 역할 교차 배정 구조적 불가.
-	// グループ毎の独立パイプライン。コスト行列が混ざらない＝役割交差割当は不可能。
-	int32 GroupIndex = 0;
-	for (auto& [Role, GroupMembers] : GroupedFollowers)
+	// [3.5] 그룹 순회 순서를 PlacementPriority로 정렬.
+	//       TMap 순회는 순서 불확정(해시 버킷)이라, 배치 순서를 정책으로 보장하려면
+	//       명시적으로 정렬해야 한다. "근접이 전선을 먼저 잡고 원거리가 그 뒤"는
+	//       게임 디자인 의도 — 낮은 priority가 먼저 자리를 잡는다(이후 점유 누적의 기준).
+	// TMapの巡回順は不確定。配置順序は設計意図なのでPlacementPriorityで明示的にソート。
+	TArray<FGameplayTag> OrderedRoles;
+	GroupedFollowers.GetKeys(OrderedRoles);
+	OrderedRoles.Sort([this](const FGameplayTag& A, const FGameplayTag& B)
 	{
+		const FRoleSlotConfig* ConfigA = FindConfigForRole(A);
+		const FRoleSlotConfig* ConfigB = FindConfigForRole(B);
+
+		// 폴백(Melee로 떨어진) 그룹은 Config가 없을 수 있음 → priority 0으로 취급.
+		const int32 PriorityA = ConfigA ? ConfigA->PlacementPriority : 0;
+		const int32 PriorityB = ConfigB ? ConfigB->PlacementPriority : 0;
+		return PriorityA < PriorityB;
+	});
+	
+	// [3.6] 점유 슬롯 누적 버퍼. 그룹 루프 "밖"에 선언하는 게 핵심 —
+	//       priority 순으로 먼저 배치된 그룹의 슬롯이 다음 그룹 평가의 입력이 된다.
+	//       (먼저 자리 잡은 쪽이 우선권 → 순서가 결과에 반영되지만, 그게 명시적 정책.)
+	// 累積バッファはループ外で宣言。先に配置されたグループのスロットが次の入力になる。
+	TArray<FVector> OccupiedSlots;
+	
+	// [4] 그룹별 독립 파이프라인: 슬롯 생성 → 환경보정 → (진입 시) 헝가리안 → push.
+	//     순회 순서 = PlacementPriority 오름차순 (위 [3.5]에서 정렬). 비용행렬이 그룹 안에 갇힘.
+	// グループ毎の独立パイプライン。巡回順はPlacementPriority昇順。
+	int32 GroupIndex = 0;
+	for (const FGameplayTag& Role : OrderedRoles)
+	{
+		TArray<APartyCharacter*>& GroupMembers = GroupedFollowers[Role];
+
 		const FRoleSlotConfig* Config = FindConfigForRole(Role);
 		if (!Config || !Config->SlotGenerator)
 		{
@@ -108,20 +134,40 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			SlotGenContext.BaseRadius = GroupBaseRadius;
 			SlotGenContext.Anchor = Anchor;
 			SlotGenContext.AttackRange = GroupMembers[MemberIndex]->GetAttackRange();
+			SlotGenContext.RequesterLocation = GroupMembers[MemberIndex]->GetActorLocation();
 			SlotGenContext.PrimaryTarget = CurrentTarget.Get();
 			SlotGenContext.PerceivedEnemies = PerceivedEnemies;
 			SlotGenContext.World = GetWorld();
-
+			SlotGenContext.OccupiedSlots = OccupiedSlots; 
+			
 			const FVector RawSlot = Config->SlotGenerator->GenerateSlot(SlotGenContext);
 			WorldSlots.Add(AdjustLocationForEnvironment(RawSlot, AnchorOrigin));
 		}
 
-		// [4b] 배정: 진입 시 그룹별 1회 헝가리안. 그룹 인원 변동 시에도 재배정.
-		// 進入時のみグループ単位でハンガリアン。人数変動時も再割当。
+		// [4b] 배정. 정책에 따라 분기:
+		//      GroupHungarian (Arc류): 슬롯이 먼저 존재 → 거리 비용으로 멤버↔슬롯 최적 배정.
+		//      MemberSpecific (RangedSafe류): 슬롯이 이미 "그 멤버의 것"(RequesterLocation 기준
+		//        생성) → 헝가리안 돌리면 자기 기준 계산한 자리가 남에게 가서 의미가 깨짐 → 항등 배정.
+		//      배정 방식은 Strategy가 선언, 실행(헝가리안 호출)은 여기 컴포넌트가 한다.
+		// 配置方針で分岐。GroupHungarianは距離コストで割当、MemberSpecificは生成順=メンバー順(恒等)。
+		// 方針はStrategyが宣言、実行はコンポーネント。
 		FRoleGroupRuntime& Runtime = RuntimeGroups.FindOrAdd(Role);
 		if (bNeedsReassignment || Runtime.SlotAssignment.Num() != GroupMembers.Num())
 		{
-			const TArray<APartyCharacter*> Assigned = SolveSlotAssignment(GroupMembers, WorldSlots);
+			TArray<APartyCharacter*> Assigned;
+
+			if (Config->SlotGenerator->GetAssignmentPolicy() == ESlotAssignmentPolicy::GroupHungarian)
+			{
+				// 슬롯 i ← 거리 비용으로 정해진 멤버.
+				Assigned = SolveSlotAssignment(GroupMembers, WorldSlots);
+			}
+			else // MemberSpecific
+			{
+				// 슬롯 i ← 멤버 i (항등). [4a]에서 멤버별로 생성했으므로 순서가 곧 주인.
+				// スロットi ← メンバーi（恒等）。[4a]でメンバー別に生成済み。
+				Assigned = GroupMembers;
+			}
+
 			Runtime.SlotAssignment.Empty(Assigned.Num());
 			for (APartyCharacter* Character : Assigned)
 			{
@@ -140,6 +186,10 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			DrawDebugSphere(GetWorld(), WorldSlots[i], 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
 		}
 
+		// 이 그룹의 최종 슬롯을 점유 리스트에 누적 → 다음(낮은 우선순위) 그룹이 피한다.
+		// 환경보정+헝가리안까지 끝난 WorldSlots가 "실제로 설 자리" → 이걸 누적.
+		// このグループの最終スロットを累積。次グループが回避する。
+		OccupiedSlots.Append(WorldSlots);
 		++GroupIndex;
 	}
 
