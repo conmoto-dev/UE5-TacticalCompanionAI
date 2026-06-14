@@ -94,9 +94,10 @@ TArray<AActor*> APartyManager::GetPerceivedEnemies() const
 //** Formation Change Algorithm *//
 void APartyManager::SetFormationMode(EPartyFormationMode NewMode)
 {
+	if (CurrentFormationMode == NewMode) return;   // 전환될 때만.
+	CurrentFormationMode = NewMode;
 	const bool bFollow = (NewMode == EPartyFormationMode::Follow);
-
-	// 두 컴포넌트 상태를 매번 명시적으로 세팅 (멱등 — 같은 모드 재호출 무해).
+	
 	// SetActive + Tick 둘 다 꺼야 비활성 컴포넌트가 push 안 함 (토글 함정 방지).
 	FollowComponent->SetActive(bFollow);
 	FollowComponent->SetComponentTickEnabled(bFollow);

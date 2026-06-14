@@ -99,4 +99,6 @@ private:
 	// "결정" — 거리 재서 모드 판단 후 SetFormationMode 호출.
 	// StateTree 이전 시 이 함수만 교체 (SetFormationMode는 그대로 생존).
 	void TickModeDecision();
+	
+	EPartyFormationMode CurrentFormationMode = EPartyFormationMode::Follow;
 };
