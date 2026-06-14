@@ -44,7 +44,17 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 	const FTransform& Anchor = AnchorOpt.GetValue();
 	const FVector AnchorOrigin = Anchor.GetLocation();
-
+	
+	// 리더 위치 1회 캐시. 모든 그룹·멤버가 공유하는 전선 기준.
+	// リーダー位置はグループ・メンバー共通の前線基準。ループ外で一度だけ。
+	FVector LeaderLocation = FVector::ZeroVector;
+	if (const APartyManager* Manager = GetOwningPartyManager())
+	{
+		if (const APartyCharacter* Leader = Manager->GetLeader())
+		{
+			LeaderLocation = Leader->GetActorLocation();
+		}
+	}
 	TArray<APartyCharacter*> Followers = GetPartyFollowers();
 	if (Followers.Num() == 0) return;
 
@@ -135,6 +145,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			SlotGenContext.Anchor = Anchor;
 			SlotGenContext.AttackRange = GroupMembers[MemberIndex]->GetAttackRange();
 			SlotGenContext.RequesterLocation = GroupMembers[MemberIndex]->GetActorLocation();
+			SlotGenContext.LeaderLocation = LeaderLocation;
 			SlotGenContext.PrimaryTarget = CurrentTarget.Get();
 			SlotGenContext.PerceivedEnemies = PerceivedEnemies;
 			SlotGenContext.World = GetWorld();

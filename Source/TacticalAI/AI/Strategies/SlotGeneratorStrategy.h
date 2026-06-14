@@ -51,6 +51,11 @@ struct FSlotGenContext
 	// 解釈はStrategy側の裁量。
 	float BaseRadius = 0.f;
 
+	// 리더(플레이어) 위치. 전선 방향 산출의 기준 — "적 무리에서 리더를 향하는 쪽"이
+	// 아군 전선이다. 원거리가 적 뒤로 넘어가지 않도록 friendly sector를 정의하는 데 쓴다.
+	// リーダー(プレイヤー)位置。前線方向の基準 — 「敵集団からリーダーへ向かう側」が味方前線。
+	FVector LeaderLocation = FVector::ZeroVector;
+	
 	// 기준 프레임. Arc류는 이걸로 로컬→월드 변환, 공간 평가류는 참고만.
 	FTransform Anchor;
 
