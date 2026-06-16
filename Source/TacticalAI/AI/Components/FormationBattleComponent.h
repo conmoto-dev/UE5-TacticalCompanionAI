@@ -113,7 +113,7 @@ protected:
 	// 단, 막 배치한 직후엔 아래 ReluctanceTime 동안 이 반경이 0→full로 서서히 켜진다.
 	// 落ち着いた後の脅威回避半径。配置直後はReluctanceTimeかけて0→fullに立ち上がる。
 	UPROPERTY(EditAnywhere, Category = "Battle|Reposition", meta = (ClampMin = "0.0"))
-	float ThreatOnTopRadius = 700.f;
+	float ThreatOnTopRadius = 1000.f;
 
 	// 비상 회피 반경. 이 안(코앞)에 적이 붙으면 reluctance 무시하고 즉시 회피.
 	// 緊急回避半径。この距離(目前)はreluctance無視で即時回避。
@@ -124,7 +124,7 @@ protected:
 	// 매직넘버 "n초 후 재슬롯"이 아니라, 이 시간에 걸쳐 회피 발동을 연속적으로 푸는 가중치.
 	// 配置後この時間で脅威回避が全開。離散的な「n秒後」でなく連続的な立ち上がり。
 	UPROPERTY(EditAnywhere, Category = "Battle|Reposition", meta = (ClampMin = "0.0", Units = "s"))
-	float ThreatReluctanceTime = 10.f;
+	float ThreatReluctanceTime = 15.f;
 
 	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
 	TWeakObjectPtr<AActor> CurrentTarget;
