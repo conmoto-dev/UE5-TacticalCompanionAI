@@ -190,21 +190,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			FCommitSnapshot& Snapshot = CommitSnapshots.FindOrAdd(Member);
 			const float TimeSinceCommit = Snapshot.bHasCommitted ? (NowSeconds - Snapshot.CommitTime) : 0.f;
 
-			// [B1] 재배치 조건: 첫 커밋 / 사거리 이탈(하드) / 위협 회피(reluctance 게이트).
-			//      홀드면 아무것도 안 한다 — locomotion이 커밋 슬롯까지 알아서 간다(커밋 잠금).
-			//      ⚠ 여기 어디에도 "플레이어와의 거리/방향"은 없다 — 의도적.
-			const bool bNeedsReposition = !Snapshot.bHasCommitted
-				|| IsSlotOutOfRange(Snapshot, Target, Member->GetAttackRange())
-				|| ShouldFleeThreat(Snapshot, PerceivedEnemies, TimeSinceCommit);
-			
-			if (!bNeedsReposition)
-			{
-				DrawDebugSphere(GetWorld(), Snapshot.CommittedSlot, 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
-				continue;
-			}
-
-			// [B2] 재배치 실행. 이 순간의 월드로 컨텍스트 조립 → 생성 → 커밋.
-			//      점유는 이미 배치된 집합형 그룹 + 나 외 다른 개별형 유닛의 커밋 슬롯(Bug 1 수정).
+			// ── 컨텍스트를 결정 '전에' 조립 (커밋 경로 + 매틱 디버그 양쪽이 쓴다) ──
 			FSlotGenContext SlotGenContext;
 			SlotGenContext.BaseRadius        = GroupBaseRadius;
 			SlotGenContext.Anchor            = Anchor;
@@ -216,7 +202,23 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 			SlotGenContext.World             = GetWorld();
 			SlotGenContext.OccupiedSlots     = GatherOccupancyForMemberSpecific(Member, OccupiedSlots);
 
-			CommitReposition(Member, SlotGenContext, *Config, Snapshot);
+			const bool bNeedsReposition =
+				   !Snapshot.bHasCommitted
+				|| IsSlotOutOfRange(Snapshot, Target, Member->GetAttackRange())
+				|| ShouldFleeThreat(Snapshot, PerceivedEnemies, TimeSinceCommit);
+
+			if (bNeedsReposition)
+			{
+				CommitReposition(Member, SlotGenContext, *Config, Snapshot); // GenerateSlot이 후보 그림
+			}
+#if ENABLE_DRAW_DEBUG
+			else if (Config->SlotGenerator)
+			{
+				// 홀드 중에도 매 틱 후보 점수장을 재평가·그리기 (커밋 X, 반환 버림).
+				// ゲート＝コミット判断 / デバッグ可視化＝毎ティック独立に再評価。
+				Config->SlotGenerator->GenerateSlot(SlotGenContext);
+			}
+#endif
 
 			DrawDebugSphere(GetWorld(), Snapshot.CommittedSlot, 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
 		}

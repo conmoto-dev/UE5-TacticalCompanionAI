@@ -33,7 +33,9 @@ FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& C
 	TArray<FVector> Candidates;
 	Candidates.Reserve(SectorCandidateCount + 1);
 
-	// 후보 0: 현재 위치. 충분히 좋으면 안 움직이는 게 가장 자연스럽다(stickiness 대상).
+	// 후보 0: 현재 위치. 트리거로 재배치가 떴어도 현재 위치가 여전히 최선이면 거기 머문다.
+	//   (예전의 Stickiness 보너스는 제거 — "안 움직이려는 관성"은 컴포넌트의 커밋 게이트가 소유.)
+	// 候補0：現在位置。hysteresisはゲートが持つのでボーナス無し、公平に競争。
 	Candidates.Add(Context.RequesterLocation);
 
 	// 후보 1..N: FrontlineDir 중심축으로 ±SectorHalfAngle를 등분한 각도에 배치.
@@ -56,8 +58,7 @@ FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& C
 
 	for (int32 i = 0; i < Candidates.Num(); ++i)
 	{
-		const FCandidateScore Score = ScoreCandidate(
-			Context, Candidates[i], TargetLoc, EnemyCenter, FrontlineDir, /*bIsCurrentLocation=*/ i == 0);
+		const FCandidateScore Score = ScoreCandidate(Context, Candidates[i], TargetLoc, EnemyCenter, FrontlineDir);
 
 		if (!Score.bRejected && Score.Total > Best.Total)
 		{
@@ -97,80 +98,55 @@ FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& C
 }
 
 USlotGeneratorStrategy_RangedSafe::FCandidateScore USlotGeneratorStrategy_RangedSafe::ScoreCandidate(
-	const FSlotGenContext& Context,
-	const FVector& Candidate,
-	const FVector& TargetLoc,
-	const FVector& EnemyCenter,
-	const FVector& FrontlineDir,
-	bool bIsCurrentLocation) const
+    const FSlotGenContext& Context,
+    const FVector& Candidate,
+    const FVector& TargetLoc,
+    const FVector& EnemyCenter,
+    const FVector& FrontlineDir) const
 {
-	FCandidateScore Result;
-	Result.Location = Candidate;
+    FCandidateScore Result;
+    Result.Location = Candidate;
 
-	// [1] 사거리 하드 필터. Band 완전히 벗어나면 평가할 가치 없음 → 탈락.
-	// 射程ハードフィルタ。Band外は脱落。
-	const float DistToTarget = FVector::Dist2D(Candidate, TargetLoc);
-	const float RangeScore = ComputeRangeScore(DistToTarget, Context.AttackRange);
-	if (RangeScore <= 0.f)
-	{
-		Result.bRejected = true;
-		Result.DebugRejectReason = TEXT("OutOfRange");
-		return Result;
-	}
+    // [1] 사거리 하드 필터 + 보상축. Band 밖이면 탈락, 안이면 [0,1] 적합도.
+    const float DistToTarget = FVector::Dist2D(Candidate, TargetLoc);
+    const float RangeScore = ComputeRangeScore(DistToTarget, Context.AttackRange);
+    if (RangeScore <= 0.f)
+    {
+        Result.bRejected = true;
+        Result.DebugRejectReason = TEXT("OutOfRange");
+        return Result;
+    }
 
-	// [2] 전선 하드 필터 + 소프트 감점. 깊게 적 뒤면 탈락, 살짝 벗어나면 감점.
-	// 前線ハードフィルタ+ソフト減点。
-	const float SignedDepth = FVector::DotProduct(Candidate - EnemyCenter, FrontlineDir);
-	if (SignedDepth < -ForbiddenBackDepth)
-	{
-		Result.bRejected = true;
-		Result.DebugRejectReason = TEXT("BehindEnemy");
-		return Result;
-	}
-	// FrontSide < 0 = 전선보다 약간 적 쪽 → 그 깊이만큼 감점.
-	const float FrontSide = FVector::DotProduct((Candidate - EnemyCenter).GetSafeNormal2D(), FrontlineDir);
-	float FrontlinePenalty = 0.f;
-	if (!bIsCurrentLocation && FrontSide < 0.f)
-	{
-		FrontlinePenalty = -FrontSide;
-	}
+    // [2] 전선 점수 (가점 [0,1]).
+    const float FrontlineScore = ComputeFrontlineScore(Candidate, EnemyCenter, FrontlineDir);
 
-	// [3] 점유 하드 필터 + 소프트 감점. 너무 가까우면 탈락, 소프트 구간이면 감점.
-	// 占有ハードフィルタ+ソフト減点。
-	bool bHardOccupied = false;
-	const float OccupancyPenalty = ComputeOccupancyPenalty(Context, Candidate, bHardOccupied);
-	if (bHardOccupied)
-	{
-		Result.bRejected = true;
-		Result.DebugRejectReason = TEXT("Occupied");
-		return Result;
-	}
+    // [3] 점유 하드 필터 + 소프트 벌점 [0,1]. 너무 가까우면 탈락, 소프트 구간이면 감점.
+    bool bHardOccupied = false;
+    const float OccupancyPenalty = ComputeOccupancyPenalty(Context, Candidate, bHardOccupied);
+    if (bHardOccupied)
+    {
+        Result.bRejected = true;
+        Result.DebugRejectReason = TEXT("Occupied");
+        return Result;
+    }
 
-	// [4] 연속 점수축.
-	const float ThreatPenalty = ComputeThreatPenalty(Context, Candidate);
-	const float MoveDist = FVector::Dist2D(Context.RequesterLocation, Candidate);
-	const float MoveCost = MoveDist / FMath::Max(Context.AttackRange, 1.f); // 사거리 스케일로 정규화.
-	const float Stickiness = bIsCurrentLocation ? StickinessBonus : 0.f;
+    // [4] 위협 벌점 [0,1].
+    const float ThreatPenalty = ComputeThreatPenalty(Context, Candidate);
 
-	// [5] 가중 합산.
-	Result.Total =
-		  RangeScore        * RangeWeight
-		- ThreatPenalty     * ThreatWeight
-		- MoveCost          * MoveCostWeight
-		- OccupancyPenalty  * OccupancyWeight
-		- FrontlinePenalty  * FrontlinePenaltyWeight
-		+ Stickiness;
-		
+    // [5] 가중 합산. 모든 축 [0,1]. 보상(Range·Frontline) +, 벌점(Threat·Occupancy) -.
+    Result.Total =
+          RangeScore        * RangeWeight        // 보상 [0,1]
+        - ThreatPenalty     * ThreatWeight        // 벌점 [0,1]
+        - OccupancyPenalty  * OccupancyWeight     // 벌점 [0,1]
+        + FrontlineScore    * FrontlineWeight;    // 보상 [0,1]
 
-	// 디버그 breakdown 기록.
-	Result.DebugRange      = RangeScore        * RangeWeight;
-	Result.DebugThreat     = ThreatPenalty     * ThreatWeight;
-	Result.DebugMoveCost   = MoveCost          * MoveCostWeight;
-	Result.DebugOccupancy  = OccupancyPenalty  * OccupancyWeight;
-	Result.DebugFrontline  = FrontlinePenalty  * FrontlinePenaltyWeight;
-	Result.DebugStickiness = Stickiness;
-	
-	return Result;
+    // 디버그 breakdown (가중 적용 후). Frontline은 이제 + 기여.
+    Result.DebugRange     = RangeScore       * RangeWeight;
+    Result.DebugThreat    = ThreatPenalty    * ThreatWeight;
+    Result.DebugOccupancy = OccupancyPenalty * OccupancyWeight;
+    Result.DebugFrontline = FrontlineScore   * FrontlineWeight;
+
+    return Result;
 }
 
 float USlotGeneratorStrategy_RangedSafe::ComputeRangeScore(float DistToTarget, float AttackRange) const
@@ -197,10 +173,13 @@ float USlotGeneratorStrategy_RangedSafe::ComputeRangeScore(float DistToTarget, f
 
 float USlotGeneratorStrategy_RangedSafe::ComputeThreatPenalty(const FSlotGenContext& Context, const FVector& Candidate) const
 {
-	// 후보~각 적 거리² 수집 → 가까운 K명만 위협 합산.
-	// 전체 합산은 적 수에 위협이 비례해 개별 접근에 둔감 → 최근접 K로 배경 절단.
-	// 반환은 "위협 벌점"(클수록 위험). 호출부에서 감점. 포화 없음 — 가까울수록 강하게 깎는 직관.
-	// 最近接K体の脅威合算。返り値は脅威ペナルティ（大きいほど危険、飽和なし）。
+	// 후보~각 적 거리² 수집 → 가까운 K명만 본다(배경 위협 절단).
+	// 각 적의 위협도를 soft saturation으로 [0,1]에 매핑: comfort²/(comfort²+dist²).
+	//   dist=0 → 1, dist=comfort → 0.5, dist→∞ → 0. 1/d² 폭발이 없어 floor 불필요.
+	// K명을 "확률적 OR"로 합성: threat = 1 - Π(1 - danger_i). 항상 [0,1].
+	//   가장 가까운 적이 자연히 지배(예전 NearestThreatMultiplier 불필요),
+	//   둘러싸이면(적 多) 1에 수렴(예전 Σ의 "둘러싸임 감지"는 유지, 무한대는 제거).
+	// 最近接K体をsoft saturation後、確率的ORで合成 → 常に[0,1]。最近接が自然に支配。
 	TArray<float, TInlineAllocator<16>> DistancesSq;
 	for (const TWeakObjectPtr<const AActor>& EnemyPtr : Context.PerceivedEnemies)
 	{
@@ -219,20 +198,17 @@ float USlotGeneratorStrategy_RangedSafe::ComputeThreatPenalty(const FSlotGenCont
 	DistancesSq.Sort();
 	const int32 Count = FMath::Min(ThreatConsiderCount, DistancesSq.Num());
 
-	float Threat = 0.f;
+	const float ComfortSq = ThreatComfortDistance * ThreatComfortDistance;
+
+	// safeProduct = Π(1 - danger_i). 위협 = 1 - safeProduct.
+	float SafeProduct = 1.f;
 	for (int32 i = 0; i < Count; ++i)
 	{
-		const float Dist = FMath::Max(FMath::Sqrt(DistancesSq[i]), ThreatDistanceFloor);
-		const float Normalized = Dist / 100.f;
-		const float Base = 1.f / FMath::Square(Normalized);
-
-		// 가장 가까운 적(0번)에 가중. "지금 제일 붙은 놈"이 제일 위험.
-		// 最近接(0番)に重み付け。
-		const float Weight = (i == 0) ? NearestThreatMultiplier : 1.f;
-		Threat += Base * Weight;
+		const float Danger = ComfortSq / (ComfortSq + DistancesSq[i]); // (0,1]
+		SafeProduct *= (1.f - Danger);
 	}
 
-	return Threat;
+	return 1.f - SafeProduct; // [0,1)
 }
 
 float USlotGeneratorStrategy_RangedSafe::ComputeOccupancyPenalty(
@@ -240,7 +216,9 @@ float USlotGeneratorStrategy_RangedSafe::ComputeOccupancyPenalty(
 {
 	bOutHardRejected = false;
 
-	float Penalty = 0.f;
+	// 소프트 벌점은 "가장 가까운 점유 슬롯"으로 [0,1] (합산 아님 — 합산은 점유 수에 따라 1 초과).
+	// ソフト減点は最近接占有で[0,1]（合算は占有数で1超過するため不可）。
+	float MaxPenalty = 0.f;
 	for (const FVector& Occupied : Context.OccupiedSlots)
 	{
 		const float Dist = FVector::Dist2D(Candidate, Occupied);
@@ -252,14 +230,27 @@ float USlotGeneratorStrategy_RangedSafe::ComputeOccupancyPenalty(
 			return 1.f;
 		}
 
-		// 소프트: 하드~소프트 구간이면 가까울수록 감점.
+		// 소프트: 하드~소프트 구간이면 가까울수록 감점, 최근접 기준 최대값.
 		if (Dist < OccupancySoftRadius)
 		{
-			Penalty += 1.f - (Dist / FMath::Max(OccupancySoftRadius, 1.f));
+			const float Penalty = 1.f - (Dist / FMath::Max(OccupancySoftRadius, 1.f));
+			MaxPenalty = FMath::Max(MaxPenalty, Penalty);
 		}
 	}
 
-	return Penalty;
+	return MaxPenalty; // [0,1]
+}
+
+float USlotGeneratorStrategy_RangedSafe::ComputeFrontlineScore(
+	const FVector& Candidate, const FVector& EnemyCenter, const FVector& FrontlineDir) const
+{
+	const FVector ToCandidate = Candidate - EnemyCenter;
+
+	// 소프트(가점): 방향 코사인 [-1,1] → [0,1]. 아군 쪽 1, 수직 0.5, 적 쪽 0.
+	// 감점이 아니라 가점 — "전선 쪽일수록 좋다"를 직접 표현(Threat/Occupancy는 반대로 나쁜 자리 감점).
+	// 加点：味方側ほど高得点。減点でなく「前線側ほど良い」を直接表現。
+	const float FrontSide = FVector::DotProduct(ToCandidate.GetSafeNormal2D(), FrontlineDir);
+	return (FrontSide + 1.f) * 0.5f;
 }
 
 FVector USlotGeneratorStrategy_RangedSafe::ComputeEnemyCenter(const FSlotGenContext& Context, const FVector& Fallback) const
