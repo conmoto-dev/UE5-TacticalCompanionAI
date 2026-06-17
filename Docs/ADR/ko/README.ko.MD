@@ -14,7 +14,7 @@
 
 처음 보는 사람은 **개관 → 번호순**으로 읽으면 된다.
 
-1. **[아키텍처 개관](0000-architecture-overview.ko.MD)** 을 먼저 읽어 전체 레이어 분담
+1. **[아키텍처 개관](0000-architecture_overview.ko.MD)** 을 먼저 읽어 전체 레이어 분담
    (Formation = Home Provider / StateTree = 행동 상태 / Resolver = 최종 이동)을 잡는다.
 2. 그 다음 개별 ADR(0001~0004)을 번호순으로. 각 ADR은 개관이 정의한 틀 안의 구체 결정이다.
 
@@ -22,13 +22,13 @@
 
 ## 문서 목록
 
-| # | 제목 | 상태 | 한 줄 요약 |
-|---|------|------|-----------|
-| [개관](0000-architecture-overview.ko.MD) | 전투 중 이동·위치·행동의 레이어 분담과 MovementIntent 중재 | Living | 전투 중 최종 위치는 슬롯 하나가 정하지 않는다. Formation은 Home(기준점)만 제공하고, StateTree가 행동 상태를, 단일 MovementIntentResolver가 여러 이동 의도 중 실행할 하나를 정한다. 번호 ADR이 아니라 여러 ADR이 공유하는 상위 틀. |
-| [0001](0001_traversal_decision_authority.MD) | Traversal(점프) 결정 권한의 소재 | Accepted | 점프 *시도 여부*(A)는 모드별 단일 주체(평시 Formation / 전투 StateTree / 적 AI)가 결정하고 공유하지 않는다. 점프 *가능 여부*(B)와 실행은 누구나 쓰는 공용 `TacticalTraversalComponent`가 전담. |
-| [0002](0002_slot_generation_abstraction.MD) | 슬롯 배치 추상화 — 집합형 vs 개별형, 직업과 Strategy의 관계 | Accepted | 슬롯 배치 Strategy 계약을 "1인 → 1슬롯"으로 통일. 멤버 순회는 컴포넌트가, 집합형(Arc)은 N·i로, 개별형(RangedSafe)은 자기 사거리·적 분포로. 배치는 런타임 고정이며 직업 태그가 Strategy를 *선택*(귀속 아님). Strategy의 정당성은 런타임 교체가 아니라 OCP + 데이터 선택. |
-| [0003](0003_battleformation_decision_execution_split.MD) | BattleFormation 결정/실행 분리 — 재배치 커밋 게이트 | Accepted | 영향맵 RangedSafe는 매 틱 슬롯을 미는 상시 컨트롤러가 아니라, 트리거(첫 배치/사거리 이탈/위협 회피) 시에만 결정하는 주기적 오라클. 그 사이엔 커밋 슬롯을 잠근다. 플레이어는 트리거가 아니다. 근거리(Arc)는 이 게이트를 안 쓴다. |
-| [0004](0004_rangedsafe_omnidirectional_influence_map.MD) | RangedSafe 360도 영향맵 — 방향축 폐기와 점수 위임 | Accepted | 원거리 슬롯 생성을 방향축(`FrontlineDir`) 둘레 좁은 부채꼴에서, 축 없이 타겟 둘레 360도에 후보를 무차별로 깔고 판단은 전적으로 점수(Threat/Occupancy/PullToAlly)에 위임하는 방식으로. 축이 없어 플레이어 궤도 회전 떨림이 구조적으로 소멸. 이 단순함은 미완성이 아니라 정통 영향맵. |
+| #                                                           | 제목 | 상태 | 한 줄 요약 |
+|-------------------------------------------------------------|------|------|-----------|
+| [개관](0000-architecture_overview.ko.MD)                      | 전투 중 이동·위치·행동의 레이어 분담과 MovementIntent 중재 | Living | 전투 중 최종 위치는 슬롯 하나가 정하지 않는다. Formation은 Home(기준점)만 제공하고, StateTree가 행동 상태를, 단일 MovementIntentResolver가 여러 이동 의도 중 실행할 하나를 정한다. 번호 ADR이 아니라 여러 ADR이 공유하는 상위 틀. |
+| [0001](0001-traversal_decision_authority.ko.MD)             | Traversal(점프) 결정 권한의 소재 | Accepted | 점프 *시도 여부*(A)는 모드별 단일 주체(평시 Formation / 전투 StateTree / 적 AI)가 결정하고 공유하지 않는다. 점프 *가능 여부*(B)와 실행은 누구나 쓰는 공용 `TacticalTraversalComponent`가 전담. |
+| [0002](0002-slot_generation_abstraction.MD)                 | 슬롯 배치 추상화 — 집합형 vs 개별형, 직업과 Strategy의 관계 | Accepted | 슬롯 배치 Strategy 계약을 "1인 → 1슬롯"으로 통일. 멤버 순회는 컴포넌트가, 집합형(Arc)은 N·i로, 개별형(RangedSafe)은 자기 사거리·적 분포로. 배치는 런타임 고정이며 직업 태그가 Strategy를 *선택*(귀속 아님). Strategy의 정당성은 런타임 교체가 아니라 OCP + 데이터 선택. |
+| [0003](0003-battleformation_decision_execution_split.ko.MD) | BattleFormation 결정/실행 분리 — 재배치 커밋 게이트 | Accepted | 영향맵 RangedSafe는 매 틱 슬롯을 미는 상시 컨트롤러가 아니라, 트리거(첫 배치/사거리 이탈/위협 회피) 시에만 결정하는 주기적 오라클. 그 사이엔 커밋 슬롯을 잠근다. 플레이어는 트리거가 아니다. 근거리(Arc)는 이 게이트를 안 쓴다. |
+| [0004](0004-rangedsafe_omnidirectional_influence_map.ko.MD) | RangedSafe 360도 영향맵 — 방향축 폐기와 점수 위임 | Accepted | 원거리 슬롯 생성을 방향축(`FrontlineDir`) 둘레 좁은 부채꼴에서, 축 없이 타겟 둘레 360도에 후보를 무차별로 깔고 판단은 전적으로 점수(Threat/Occupancy/PullToAlly)에 위임하는 방식으로. 축이 없어 플레이어 궤도 회전 떨림이 구조적으로 소멸. 이 단순함은 미완성이 아니라 정통 영향맵. |
 
 > 📌 **번호 메모:** "전투 행동 레이어링"은 원래 ADR-0004로 작성됐다가, 단일 결정이 아니라
 > 전체 틀임이 분명해져 **개관 문서로 승격**(번호 체계 밖)되었다. 그 자리의 0004 번호는
