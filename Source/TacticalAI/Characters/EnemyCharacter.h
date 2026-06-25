@@ -1,24 +1,44 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Characters/TacticalCharacterBase.h"
 #include "EnemyCharacter.generated.h"
 
+class UEnemyFormationProfile;
+
 // =========================================================================
-// 적 캐릭터 베이스 (APartyCharacter 대칭, 단 빙의 안 됨 → 카메라/입력 없음).
-// 진형에서 수동적 — 슬롯 좌표를 받아 이동만. 그룹 전략·배치 판단은 컴포넌트가 한다.
+// 적 캐릭터 베이스.
 //
-// 기질은 "개별 특성 레벨"의 정책이다. 진형(스폰풀이 정함)이 이 값을 덮어쓰지 않는다.
+// 적의 "종류"는 이 BP 클래스 단위로 취급한다.
+// 외형, 개별 전투 성향, 기본 Formation Profile은
+// 같은 적 종류의 기본값으로 보관한다.
 //
-// APartyCharacter와의 의도된 비대칭: 적은 역할 태그(CombatRole)를 들지 않는다. 동료는
-// 4인 고정이라 디자이너가 역할을 직접 지정하지만, 적의 전열/후열은 배치 시 교전거리에서
-// 정렬로 산출되기 때문. 즉 적에겐 역할 축이 아예 없다.
+// 기본 Formation은 Encounter/Spawn Override가 없을 때만 사용하는
+// fallback 공간 배치 정책이다.
+// Encounter/Spawn 쪽에서 Formation Override가 지정되면,
+// 이 기본 Formation은 실행하지 않는다.
+//
+// Formation 계산, Target 조정, Slot 배정, 이동 명령은
+// 이 Actor가 직접 수행하지 않는다.
+// 이 Actor는 적 종류의 기본 정책 데이터를 제공하고,
+// 런타임 전술 결정은 이후 Enemy Tactical Coordinator가 담당한다.
+//
+// 敵キャラクター基底。
+//
+// 敵の「種類」はこのBPクラス単位で扱う。
+// 外見・個別の戦闘傾向・デフォルトFormation Profileは、
+// 同じ敵種の基本値として保持する。
+//
+// デフォルトFormationは、Encounter/Spawn Overrideが無い場合だけ使う
+// fallback用の空間配置方針。
+// Encounter/Spawn側でFormation Overrideが指定された場合、
+// このデフォルトFormationは実行されない。
+//
+// Formation計算・Target調整・Slot割り当て・移動命令は
+// このActorでは直接行わない。
+// このActorは敵種の基本方針データを提供し、
+// ランタイム戦術決定はEnemy Tactical Coordinatorが担当する。
 // =========================================================================
-// 敵キャラ基底（APartyCharacter対称、ただし憑依されない＝カメラ/入力なし）。
-// 種類＝このBPクラス一つに外見と気質が一体。外見と気質を別々に組み合わせない。
-// 気質は「個別特性レベル」のポリシー。隊形（スポーンプールが決める）はこれを上書きしない。
 UCLASS()
 class TACTICALAI_API AEnemyCharacter : public ATacticalCharacterBase
 {
@@ -27,28 +47,122 @@ class TACTICALAI_API AEnemyCharacter : public ATacticalCharacterBase
 public:
 	AEnemyCharacter();
 
-	// 슬롯 생성 Context로 전달될 교전 사거리. APartyCharacter와 같은 이름·시그니처라
-	// 공유 Strategy(_RangedSafe 등)가 적·아군 구분 없이 Context.AttackRange를 받는다.
-	// (다형성 아님 — 각 컴포넌트가 자기 타입에서 값을 뽑아 Context에 넣을 뿐. 읽기 일관성용.)
-	// プレイヤーと同一シグネチャ。共有Strategyが敵味方を区別せず射程を受け取る。
-	float GetAttackRange() const { return AttackRange; }
+	// =========================================================================
+	// Override가 없을 때 사용할 적 종류 기본 Formation Profile.
+	//
+	// 이 값은 몬스터 종류의 기본 공간 배치 정책일 뿐이며,
+	// Encounter/Spawn Override가 지정되면 사용하지 않는다.
+	//
+	// Overrideが無い場合に使用する敵種デフォルトFormation Profile。
+	//
+	// これは敵種の基本空間配置方針であり、
+	// Encounter/Spawn Overrideが指定された場合は使用しない。
+	// =========================================================================
+	const UEnemyFormationProfile* GetDefaultFormationProfile() const
+	{
+		return DefaultFormationProfile.Get();
+	}
 
-	// 도주 발동 체력 비율 조회. 행동 레이어(StateTree)가 도주 판단에 사용(지금은 자리만).
-	// 退却発動の体力割合。行動レイヤーが退却判断に使用。
-	float GetFleeHealthRatio() const { return FleeHealthRatio; }
+	// =========================================================================
+	// 개별 공격 행동에서 참고할 선호 교전 사거리.
+	//
+	// Formation Layout 계층은 이 값을 직접 읽지 않는다.
+	// Target Policy, Attack State, Return 판단 같은
+	// 전투 실행 계층에서 참고할 수 있는 적 종류의 성향 값이다.
+	//
+	// 個別攻撃行動で参照する選好交戦距離。
+	//
+	// Formation Layout層はこの値を直接読まない。
+	// Target Policy・Attack State・Return判断など、
+	// 戦闘実行レイヤーが参照できる敵種の傾向値。
+	// =========================================================================
+	float GetAttackRange() const
+	{
+		return AttackRange;
+	}
+
+	// =========================================================================
+	// 도주 발동 체력 비율.
+	//
+	// Formation Override는 이 값을 덮어쓰지 않는다.
+	// 실제 도주 실행 여부는 행동 계층에서 판단한다.
+	//
+	// 退却開始の体力割合。
+	//
+	// Formation Overrideはこの値を上書きしない。
+	// 実際に退却するかどうかは行動レイヤーで判断する。
+	// =========================================================================
+	float GetFleeHealthRatio() const
+	{
+		return FleeHealthRatio;
+	}
 
 private:
-	// ───── 개별 기질 (종류가 정하는 정책. 진형이 덮어쓰지 않음) ─────
-	// 선호 교전 사거리. 배치 정렬의 유일한 기준 + 슬롯 생성 Context로 전달.
-	// 작을수록 타겟 가까이(전열), 클수록 멀리(후열) 정렬 — 강제 아닌 기본값(ADR-0006).
-	// 디자이너가 배치를 직접 뒤집을 수 있으므로(탱커 앞/근접 딜러 뒤), 이건 "합리적 기본"일 뿐.
-	// 選好交戦距離。配置整列の唯一の基準。小さいほど前、大きいほど後（強制でなく既定値）。
-	UPROPERTY(EditAnywhere, Category="Disposition", meta=(ClampMin="0.0"))
-	float AttackRange = 200.f;
+	// =========================================================================
+	// 적 종류 기본 Formation.
+	//
+	// 같은 BP 클래스의 적들이 Override 없이 그룹화될 때 사용할 기본 Profile.
+	// 레벨의 특정 Spawn/Encounter에서만 다른 배치를 쓰고 싶다면,
+	// 이 값을 바꾸지 말고 Spawn/Encounter의 Formation Source를 사용한다.
+	//
+	// 敵種デフォルトFormation。
+	//
+	// 同じBPクラスの敵がOverride無しでグループ化される場合に使う
+	// 基本Profile。
+	// レベル上の特定Spawn/Encounterだけ別配置にしたい場合は、
+	// この値ではなくSpawn/Encounter側のFormation Sourceを使用する。
+	// =========================================================================
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "敵フォーメーション",
+		meta = (
+			AllowPrivateAccess = "true",
+			DisplayName = "デフォルトFormation Profile"))
+	TObjectPtr<UEnemyFormationProfile> DefaultFormationProfile = nullptr;
 
-	// 도주 발동 체력 비율. HP가 이 비율 밑이면 이탈 시도 (행동 레이어에서 사용, 지금은 자리만).
-	// 0이면 끝까지 싸우는 종류 — 절대 도망 안 침.
-	// 退却する体力割合。これ未満で離脱を試みる。0なら最後まで戦う。前列配置でも不変。
-	UPROPERTY(EditAnywhere, Category="Disposition", meta=(ClampMin="0.0", ClampMax="1.0"))
-	float FleeHealthRatio = 0.f;
+	// =========================================================================
+	// 적 종류의 전투 성향.
+	//
+	// 적 종류가 가지는 개별 전투 판단용 기본값이다.
+	// Formation Override는 공간 배치 정책만 덮어쓰며,
+	// 이 전투 성향 값은 덮어쓰지 않는다.
+	//
+	// 敵種の戦闘傾向。
+	//
+	// 敵種が持つ個別戦闘判断用の基本値。
+	// Formation Overrideは空間配置方針だけを上書きし、
+	// この戦闘傾向値は上書きしない。
+	// =========================================================================
+
+	// 선호 교전 사거리.
+	// 개별 공격/이탈 판단에서 참고하는 적 종류의 전투 성향 값이다.
+	//
+	// 選好交戦距離。
+	// 個別攻撃・離脱判断で参照する敵種の戦闘傾向値。
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "敵AI|戦闘傾向",
+		meta = (
+			AllowPrivateAccess = "true",
+			ClampMin = "0.0",
+			DisplayName = "選好交戦距離"))
+	float AttackRange = 200.0f;
+
+	// 도주 발동 체력 비율.
+	// 0이면 끝까지 싸우는 종류로 해석한다.
+	//
+	// 退却を開始する体力割合。
+	// 0の場合は最後まで戦う敵種として扱う。
+	UPROPERTY(
+		EditDefaultsOnly,
+		BlueprintReadOnly,
+		Category = "敵AI|戦闘傾向",
+		meta = (
+			AllowPrivateAccess = "true",
+			ClampMin = "0.0",
+			ClampMax = "1.0",
+			DisplayName = "退却開始体力割合"))
+	float FleeHealthRatio = 0.0f;
 };
