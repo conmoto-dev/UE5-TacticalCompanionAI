@@ -2,6 +2,7 @@
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "NavigationSystem.h"
 
 #if WITH_EDITORONLY_DATA
 #include "Components/ArrowComponent.h"
@@ -232,8 +233,17 @@ void AEnemySpawner::SpawnEntryListAtSlots(
 
 			const FEnemyFormationSlot& Slot = Slots[SlotIndex];
 
-			SpawnEnemyAtSlot(Entry.EnemyClass, Slot);
-			DrawDebugSlot(Slot);
+			FTransform ResolvedSpawnTransform = Slot.WorldTransform;
+
+			AEnemyCharacter* SpawnedEnemy = SpawnEnemyAtSlot(
+				Entry.EnemyClass,
+				Slot,
+				ResolvedSpawnTransform);
+
+			if (SpawnedEnemy)
+			{
+				DrawDebugSlot(ResolvedSpawnTransform, Slot.SlotIndex);
+			}
 
 			++SlotIndex;
 		}
@@ -242,72 +252,111 @@ void AEnemySpawner::SpawnEntryListAtSlots(
 
 AEnemyCharacter* AEnemySpawner::SpawnEnemyAtSlot(
 	const TSubclassOf<AEnemyCharacter> EnemyClass,
-	const FEnemyFormationSlot& Slot)
+	const FEnemyFormationSlot& Slot,
+	FTransform& OutResolvedSpawnTransform)
 {
-	if (!EnemyClass)
+	OutResolvedSpawnTransform = Slot.WorldTransform;
+
+	if (!EnemyClass || !GetWorld())
 	{
 		return nullptr;
 	}
 
-	UWorld* World = GetWorld();
+	const TArray<FTransform> SpawnCandidates =
+		BuildSpawnResolveCandidates(Slot.WorldTransform);
 
-	if (!World)
+	for (FTransform CandidateTransform : SpawnCandidates)
+	{
+		FVector ProjectedLocation = CandidateTransform.GetLocation();
+
+		if (TryProjectSpawnLocationToNavigation(CandidateTransform.GetLocation(), ProjectedLocation))
+		{
+			CandidateTransform.SetLocation(ProjectedLocation);
+		}
+
+		AEnemyCharacter* SpawnedEnemy = TrySpawnEnemyAtTransform(
+			EnemyClass,
+			CandidateTransform,
+			ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButDontSpawnIfColliding);
+
+		if (SpawnedEnemy)
+		{
+			OutResolvedSpawnTransform = CandidateTransform;
+
+			UE_LOG(
+				LogEnemySpawner,
+				Log,
+				TEXT("敵をスポーンしました。Spawner=%s, Enemy=%s, SlotIndex=%d"),
+				*GetName(),
+				*GetNameSafe(SpawnedEnemy),
+				Slot.SlotIndex);
+
+			return SpawnedEnemy;
+		}
+
+		if (!bResolveSpawnCollision)
+		{
+			break;
+		}
+	}
+
+	UE_LOG(
+		LogEnemySpawner,
+		Warning,
+		TEXT("安全なスポーン位置を見つけられませんでした。Spawner=%s, EnemyClass=%s, SlotIndex=%d"),
+		*GetName(),
+		*GetNameSafe(EnemyClass.Get()),
+		Slot.SlotIndex);
+
+	return nullptr;
+}
+
+AEnemyCharacter* AEnemySpawner::TrySpawnEnemyAtTransform(
+	const TSubclassOf<AEnemyCharacter> EnemyClass,
+	const FTransform& SpawnTransform,
+	const ESpawnActorCollisionHandlingMethod CollisionHandlingMethod)
+{
+	if (!EnemyClass || !GetWorld())
 	{
 		return nullptr;
 	}
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.Owner = this;
-	SpawnParams.SpawnCollisionHandlingOverride =
-		ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
+	SpawnParams.SpawnCollisionHandlingOverride = CollisionHandlingMethod;
 
 #if WITH_EDITOR
-	if (!World->IsGameWorld())
+	if (!GetWorld()->IsGameWorld())
 	{
 		SpawnParams.ObjectFlags |= RF_Transient;
 	}
 #endif
 
 	AEnemyCharacter* SpawnedEnemy =
-		World->SpawnActor<AEnemyCharacter>(
+		GetWorld()->SpawnActor<AEnemyCharacter>(
 			EnemyClass.Get(),
-			Slot.WorldTransform,
+			SpawnTransform,
 			SpawnParams);
 
-	if (!SpawnedEnemy)
+	if (SpawnedEnemy)
 	{
-		UE_LOG(
-			LogEnemySpawner,
-			Warning,
-			TEXT("Failed to spawn enemy. Spawner=%s, EnemyClass=%s"),
-			*GetName(),
-			*GetNameSafe(EnemyClass.Get()));
-
-		return nullptr;
+		SpawnedEnemies.Add(SpawnedEnemy);
 	}
-
-	SpawnedEnemies.Add(SpawnedEnemy);
-
-	UE_LOG(
-		LogEnemySpawner,
-		Log,
-		TEXT("Spawned enemy. Spawner=%s, Enemy=%s, SlotIndex=%d"),
-		*GetName(),
-		*GetNameSafe(SpawnedEnemy),
-		Slot.SlotIndex);
 
 	return SpawnedEnemy;
 }
 
-void AEnemySpawner::DrawDebugSlot(const FEnemyFormationSlot& Slot) const
+void AEnemySpawner::DrawDebugSlot(
+	const FTransform& SlotTransform,
+	const int32 SlotIndex) const
 {
 	if (!bDrawDebugSlots || !GetWorld())
 	{
 		return;
 	}
 
-	const FVector Location = Slot.WorldTransform.GetLocation();
-	const FVector Forward = Slot.WorldTransform.GetUnitAxis(EAxis::X);
+	const FVector Location = SlotTransform.GetLocation();
+	const FVector Forward = SlotTransform.GetUnitAxis(EAxis::X);
 
 	DrawDebugSphere(
 		GetWorld(),
@@ -338,4 +387,77 @@ int32 AEnemySpawner::GetTotalSpawnCount(const TArray<FEnemySpawnEntry>& Entries)
 	}
 
 	return TotalCount;
+}
+
+TArray<FTransform> AEnemySpawner::BuildSpawnResolveCandidates(
+	const FTransform& DesiredTransform) const
+{
+	TArray<FTransform> Candidates;
+	Candidates.Add(DesiredTransform);
+
+	if (!bResolveSpawnCollision)
+	{
+		return Candidates;
+	}
+
+	const float SafeRadiusStep = FMath::Max(1.0f, SpawnResolveRadiusStep);
+	const int32 SafeDirectionCount = FMath::Max(4, SpawnResolveDirectionCount);
+
+	const FVector Origin = DesiredTransform.GetLocation();
+	const FQuat Rotation = DesiredTransform.GetRotation();
+	const FVector ForwardVector = DesiredTransform.GetUnitAxis(EAxis::X);
+	const FVector RightVector = DesiredTransform.GetUnitAxis(EAxis::Y);
+
+	for (float Radius = SafeRadiusStep; Radius <= SpawnResolveMaxRadius; Radius += SafeRadiusStep)
+	{
+		for (int32 DirectionIndex = 0; DirectionIndex < SafeDirectionCount; ++DirectionIndex)
+		{
+			// [1] 원래 슬롯 주변을 링 형태로 넓혀가며 후보 위치를 만든다.
+			// [1] 元のスロット周辺をリング状に広げながら候補位置を作る。
+			const float AngleRadians =
+				2.0f * PI * static_cast<float>(DirectionIndex) / static_cast<float>(SafeDirectionCount);
+
+			const FVector Offset =
+				ForwardVector * FMath::Cos(AngleRadians) * Radius
+				+ RightVector * FMath::Sin(AngleRadians) * Radius;
+
+			FTransform CandidateTransform(Rotation, Origin + Offset, FVector::OneVector);
+			Candidates.Add(CandidateTransform);
+		}
+	}
+
+	return Candidates;
+}
+
+bool AEnemySpawner::TryProjectSpawnLocationToNavigation(
+	const FVector& SourceLocation,
+	FVector& OutProjectedLocation) const
+{
+	OutProjectedLocation = SourceLocation;
+
+	if (!bProjectSpawnToNavMesh || !GetWorld())
+	{
+		return false;
+	}
+
+	UNavigationSystemV1* NavSystem =
+		FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+
+	if (!NavSystem)
+	{
+		return false;
+	}
+
+	FNavLocation NavLocation;
+
+	if (!NavSystem->ProjectPointToNavigation(
+		SourceLocation,
+		NavLocation,
+		NavProjectionExtent))
+	{
+		return false;
+	}
+
+	OutProjectedLocation = NavLocation.Location;
+	return true;
 }
