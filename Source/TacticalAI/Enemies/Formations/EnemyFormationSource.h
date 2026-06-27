@@ -96,7 +96,7 @@ public:
 		BlueprintReadOnly,
 		Category = "敵フォーメーション",
 		meta = (DisplayName = "参照方式"))
-		EEnemyFormationSourceMode SourceMode = EEnemyFormationSourceMode::None;
+	EEnemyFormationSourceMode SourceMode = EEnemyFormationSourceMode::None;
 
 	// =========================================================================
 	// 재사용 가능한 Formation Profile.
