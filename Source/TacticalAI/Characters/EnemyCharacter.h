@@ -58,7 +58,7 @@ public:
 	// これは敵種の基本空間配置方針であり、
 	// Encounter/Spawn Overrideが指定された場合は使用しない。
 	// =========================================================================
-	const UEnemyFormationProfile* GetDefaultFormationProfile() const
+	UEnemyFormationProfile* GetDefaultFormationProfile() const
 	{
 		return DefaultFormationProfile.Get();
 	}
