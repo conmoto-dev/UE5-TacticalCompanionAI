@@ -12,10 +12,10 @@
 
 **나의 차별점**: 동료 AI 시스템 (대학생 때부터의 꿈, 이전 BT/네비 경험 기반)
 
-**현재 상태**: 평시 추종 + 환경적응 + Yield 완성 → 전투 진형(배치/재배치 결정) 완성 → 다음은 StateTree·전투 행동
+**현재 상태**: 평시 추종 + 환경적응 + Yield 완성 → 전투 진형(배치/재배치 결정) 완성 → 적 스폰 초기배치(CompositeFormation) 완성 → 다음은 StateTree·전투 행동·적 그룹 전투
 
-> ⚠️ **회사 다니면서 작업.** 예상보다 오래 걸리는 게 기본이다 (RangedSafe만 1주 걸림). "몇 주차"
-> 같은 건 안 센다 — 자책만 부른다. 대신 "완료한 것 / 지금 하는 것 / 언젠가 할 것"으로 관리하고,
+> ⚠️ **회사 다니면서 작업.** 예상보다 오래 걸리는 게 기본이다. "몇 주차"
+> 같은 건 안 센다. 대신 "완료한 것 / 지금 하는 것 / 언젠가 할 것"으로 관리하고,
 > 로드맵 전체 지도 위에서 매번 우선순위를 다시 새긴다.
 
 ---
@@ -59,8 +59,16 @@
 - **RangedSafe 360도 영향맵** (→ ADR-0004) — 방향축(FrontlineDir) 폐기. sector 분산은 "군집의 반대 극단(억지 분산)"이라 기각. 360도 등각 후보 + 점수 위임(Threat soft-saturation/Occupancy/PullToAlly). 축이 없어 플레이어 궤도 회전 트위치 구조적 소멸
 - **점프 결정권한 A/B 분리** (→ ADR-0001) — "할까(A=정책, 모드별 단일주체)"와 "가능한가(B=역학, 공용 Traversal)" 분리. 비대칭을 보고 "합치자" 직행하는 착각을 막은 사례
 
+### 적 스폰 / 초기 배치 (CompositeFormation) — ADR-0007로 문서화
+- **모드 2갈래** — `EEnemyFormationMode { ByEnemyClass, CompositeFormation }`. Details에서 `EditCondition`+`EditConditionHides`로 선택 모드 데이터만 노출. ByEnemyClass는 *입구만* (BuildFallbackSlots 임시 일렬, 전투 행동 아직 없음 — Targeting/StateTree 연결점으로 비워둠)
+- **Spawner 인라인 복합 배치** — `FEnemyCompositeFormation`을 DataAsset 아니라 `AEnemySpawner` 안 인라인 UPROPERTY로. 디자이너가 `FEnemySubFormation` 배열을 `+/-`로 직접 조합. 재사용 Preset보다 *스폰 지점별 직접 편집*이 목표.
+- **SubFormation 전략** (→ ADR-0002 재사용) — `UEnemySubFormationBase`(EditInlineNew+Blueprintable) + `_Line`/`_Circle`/`_Arc`/`_Scatter`. 계약은 `BuildSlots(기준Transform, SlotCount) → FEnemyFormationSlot[]` 하나(BlueprintNativeEvent라 BP 확장 가능). Scatter는 후보 N개 중 기존 슬롯과 최대거리(best-candidate sampling)
+- **책임 분리 (이상위치 ↔ 보정)** — 전략은 *이상적 슬롯만*, 벽/장애물/NavMesh 보정은 `AEnemySpawner`가 공통. 새 SubFormation 추가가 보정 중복 없이 위치계산만으로 끝남. "한 곳이 너무 많이 안다"는 위화감이 이 분리를 끌어냄
+- **스폰 보정 흐름** — `BuildSpawnResolveCandidates`(반경 step씩 ↑, 각 반경 방향 N개 링) → `ProjectPointToNavigation`(옵션) → `AdjustIfPossibleButDontSpawnIfColliding`. 안전위치 못 찾으면 *벽 안 강제 스폰 안 하고* Warning 로그 후 nullptr. 보정 옵션 전부 Spawner UPROPERTY
+- **에디터 즉시 확인 루프** — `SpawnEnemies`/`ClearSpawnedEnemies` `CallInEditor`. 게임월드 아니면 `RF_Transient`로 스폰(레벨 안 더럽힘) + 슬롯 디버그 표시. 조합→즉시 확인→조정
+
 ### 프로젝트 운영 / 문서
-- **ADR 문서 체계 구축** — 0000 개관(번호 밖) + 0001~0004, **한국어판(`ko/`, 코드 디테일 복기용) / 일본어판(`Docs/ADR/`, 코드 몰라도 읽히는 어필용)** 양판. 인덱스 README 양판
+- **ADR 문서 체계 구축** — 0000 개관(번호 밖) + 0001~0004 + 0006~0007, **한국어판(`ko/`, 코드 디테일 복기용) / 일본어판(`Docs/ADR/`, 코드 몰라도 읽히는 어필용)** 양판. 인덱스 README 양판. (0006은 구현 후 보충 추가 — 전투중 방침 vs 0007 스폰시점 도구 경계 명시)
 - **ADR 작성 지침 정립** — 동결 아니라 근거 보존 / 기각 대안 필수 / 검증범위 넘는 단정 금지 / 안 한 고민은 어필용이라도 안 적음 / 구현 안 한 것 한 것처럼 안 씀
 - 주석 규칙 (한국어 작업용 + 일본어 설계핵심만, 영어 제거 / 그룹박스 + 단계넘버링 / UPROPERTY 툴팁 한일 병기)
 - 커밋 메시지 규칙 (영어, conventional prefix, ■ Problem/Changes/Preserved/Known limitations)
@@ -70,9 +78,8 @@
 
 ## 🚧 진행 중 / 바로 다음
 
-- [ ] **영상 촬영 (포폴 자료)** — ⭐ 이게 1순위. 코드 아무리 좋아도 면접관은 영상 5초를 README 100줄보다 먼저 본다. 자꾸 밀리는데, 계속 밀면 안 됨
+- [ ] **영상 촬영 (포폴 자료)** — ⭐ 1순위.
 - [ ] **내려가는 트래버설** — takeoff 계산이 올라가기 전제라 내려가기 깨짐. 점프 아니라 걸어 떨어지기로 기움 (아래 설계 고민)
-- [ ] **Bug 3: RangedSafe Stickiness/MoveCost 잔재 제거** — 영향맵 재작성으로 이미 사라졌을 가능성 높음. 코드 확인 후 ADR-0003 §6에서 그 줄 정리
 
 ---
 
@@ -81,7 +88,7 @@
 > 다 할 수 없다는 걸 안다. 그래도 다 적어둔다. 머릿속에만 있으면 까먹고 같은 고민 반복한다.
 > 전체 지도를 펼쳐놓고, 매번 "지금 이 중 뭐가 제일 중요한가"를 다시 고른다.
 
-### 🟢 가까운 것 (길은 닦임, 결심 적게 듦)
+### 🟢 기능 설계 (설계 기반은 있지만 시스템 전체 설계 후 폴리싱 예정)
 - **내려가는 트래버설** — NavLink 안 쓰는 중. 올라가기=점프 완료. 내려가기는 walk-off-ledge(가장자리까지 MoveTo → 직접 이동입력으로 NavMesh 밖 → 자동 낙하 → 착지 후 MoveTo 복귀)로 기움. 가장자리 감지 복잡도가 고민
 - **평지 갭 점프 판정** — 단차 없이 끊긴 절벽(ZDiff≈0). 수직 sweep으로 안 잡힘 → NavMesh 연속성/중간 ground trace로 감지해야. "ZDiff가 신호가 아니라 NavMesh 우회량이 신호"라는 결론과 같은 결. **나중에 고민** (ADR-0001 §8.2)
 - `SlotCacheUpdateDistance` → FormationDataAsset 이동 (값 500이 I진형 군집 유발, 진형별 튜닝)
@@ -89,26 +96,29 @@
 - 리더 스왑 실제 구현 (Possess 핸들러 이미 깔림 → 부르기만)
 - `AbortTraversal` APartyCharacter → ACharacter 캐스트 정정 (비-PartyCharacter에서 abort 동작 회복, ADR-0001 §9)
 - Occupancy 선형 → 제곱 감쇠 (영향맵 "격자 느낌" 나면 한 줄 변경, ADR-0004 §6)
+- 스폰 보정 슬롯별 독립 → 확정 위치 반영 (좁은 공간서 다수 슬롯 동시 막힐 때 후보가 서로 침범. 실측 후 거슬리면, ADR-0007 §6)
+- **V/I 자동전환 정밀화** — 현재 리더 위치에서만 통로 폭 측정 (진형 실제 점유공간 무시). StateTree 복합조건으로
 
-### 🟡 중간 (구조 작업, 결심 필요)
+### 🟡 핵심 구조 설계 (필수 구현 목표 설계 시스템)
 - **StateTree 도입** — 모드 선택을 컴포넌트 if/else에서 이관. **전투 다음** (지금은 State가 사실상 Follow/Battle 2개 — StateTree가 풀 문제가 이제 막 실재). 복합조건(좁음 AND 0.5초 AND 비전투), 히스테리시스/우선순위 빌트인. ⚠️ 과용 경계 — 매틱 슬롯계산/yield 세부는 C++ 핫패스
 - **MovementIntent 조정 레이어** — 유닛별 커밋 모델을 단일 Resolver로 일반화. intent 우선순위(P0생존~P4홈) + 인터럽트 가능성 분리. 공격/회피/traversal/홈을 같은 언어(intent)로. 개관 문서가 전체 설계
 - **Home + 슬롯-앵커 국소 흐름 (포텐셜 필드+그래디언트 D9)** — 닻(커밋 슬롯)은 이산 고정, 그 주변 좁은 반경만 작은 포텐셜로 흐르게. "물처럼 흐르는" 느낌. P4 HomeSlot intent의 일부 → "공격 중 안 흐름"이 우선순위로 자동. StateTree/MovementIntent 후
 - **reluctance CommitTime 출발/도착 정밀화** — 현재 출발 시점에 찍혀 이동 길면 약해짐. 도착 이벤트(ReceiveMoveCompleted + FAIRequestID 대조)로 재찍기. 단 "출발 폴백 + 도착 덮어쓰기 + 도착대기 상태 안 만들기"로 프리징 방지. 적 이동 들어와야 검증 가능 (ADR-0003 §6)
-- **V/I 자동전환 정밀화** — 현재 리더 위치에서만 통로 폭 측정 (진형 실제 점유공간 무시). StateTree 복합조건으로
-
-### 🔴 먼 것 / 큰 것 (큰 결심, 선행 필요)
 - **타겟 선정 레이어** — Perception 기반 적 감지(현재 DebugPerceivedEnemies 수동). 존 앵커링("플레이어 교전 구역으로 후보 제약" — 거리 리쉬 대신). Threat/PullToAlly 체감이 이게 있어야 검증됨
 - **전투 행동 (스킬 레이어, [3])** — 각 동료 자율 전투. 공격/스킬 모션, 사거리 기반 발동. 슬롯 Strategy가 사거리(캐릭터 아님) 받게 해둔 게 이걸 위한 포석
 - **BossEvade Coordinator** — 보스 전체공격 회피. 파티 단위 안전위치 할당(개별 StateTree 단독 아님 — 같은 곳 몰림/입구 낑김 방지). 개관 D5
-- **엄폐 평가 (cover/LoS)** — 영향맵에 "엄폐 될 수 있는 위치"가 후보로 살아남게는 됐지만, 엄폐 자체를 *평가*하진 않음. NavMesh cover / line-of-sight 점수축 추가
-- **적 진형 (Flock 기반)** — 리더리스 집단 이동. ATacticalCharacterBase로 기반 재사용. 로드맵 순서상 전투→StateTree→Flock
+- **적 그룹 전투 — 전략을 종류에서 분리** (→ ADR-0006) — 그룹 전투 방침을 몬스터 종류에 고정 안 함. 개별 기질(교전거리/도망임계/공격성)은 몬스터, 그룹 진형(포위/산개/C)은 배치 데이터가. 스폰 초기배치(0007, 완료) *위에* 슬롯-닻 기억 → Target/Anchor 재배치 → Hold/Commit/Return을 쌓아 *전투중* 행동으로. **전투→StateTree→이것** 순. 핵심 계약: 그룹전략은 slot/target/token/posture "의도"만, GAS ability 직접 호출 금지
+- **적 진형 (Flock 기반)** — 리더리스 집단 이동. `ATacticalCharacterBase`로 기반 재사용. 위 그룹전투와 별개 축(이건 *이동*, 위는 *전투 배치*)
 
-### ⚪ 낮은 우선순위
+### 🔴 추가 목표 (아이디어만. 다른 목표 모두 완료 시)
+- **엄폐 평가 (cover/LoS)** — 영향맵에 "엄폐 될 수 있는 위치"가 후보로 살아남게는 됐지만, 엄폐 자체를 *평가*하진 않음. NavMesh cover / line-of-sight 점수축 추가
+- 스킬 체이닝
 - `UYieldStrategy_Narrow` — 통로용 flip (I진형 양보)
 - NavLink-aware 점프
+
+### ⚪ 낮은 우선순위
 - NavMesh 가장자리 회피 (절벽/위험 — 현재 맵에선 잘 안 나와서 미룸. "플레이어가 밀면 동료가 절벽으로" 문제도 여기)
-- 스킬 체이닝
+
 
 ---
 
@@ -124,6 +134,7 @@
 6. **방향 안 정하고 평가 위임 (360도 영향맵)** → ADR-0004
 7. StateTree vs BT (commit형 모드엔 state machine)
 8. (격하) Detour 회피를 컨트롤러가 결정 — 구현 기법이라 ADR/구현 영역으로
+9. **적 스폰 인라인 조합 vs 재사용 Preset** (재사용≠직접편집, 그 자리 `+/-` 조합) + **이상위치/보정 책임 분리** → ADR-0007
 
 ---
 
@@ -158,9 +169,26 @@
 진단. 근거로 든 게 다 B(물리)였는데 그건 이미 캐릭터에 있음 — A(상황판단)를 캐릭터로 내릴 근거가
 아님. "Battle에 A 없음"은 *미구현*이지 오배치 아님. 비대칭≠결함. 자세히 ADR-0001.
 
+**(스폰) 왜 Preset 안 쓰고 Spawner 인라인으로 갔나**
+처음엔 `Line+Line`/`Line+Circle` 조합을 Formation Preset 자산으로 만들어두고 스폰지점에서 *고르는*
+구조가 자연스러워 보임. 근데 요구를 다시 보니 어긋남 — 원한 건 "C/D/E 만들어두고 선택"이 아니라
+*이 스폰지점 안에서 직접 조합*. 어떤 지점은 전열만, 어떤 지점은 전열Line+후열Circle. Preset으로
+하면 지점마다 조금씩 다른 배치 위해 복제·Override·Variant·동기화가 줄줄이 따라옴. 핵심 통찰:
+"재사용"과 "직접편집"은 *다른 목표축*. Preset은 "같은 설정 여러 곳", 인라인은 "이 자리서 그때그때".
+이번은 명백히 후자 → `FEnemyCompositeFormation`을 자산 아닌 Spawner 인라인으로. (자동 거리 그룹핑도
+기각 — 디자이너가 "이 둘은 한 진형" 의도할 방법 없어짐. 0006의 "그룹경계는 배치가 만든다"와 같은 결.)
+자세히 ADR-0007.
+
+**(스폰) 왜 보정을 SubFormation 아니라 Spawner에 뒀나**
+`Line`/`Circle`이 슬롯 만들면서 벽체크·NavMesh 투영까지 하면 두 개 터짐 — ① 배치형태가 월드충돌·
+NavSystem까지 알아야 함(책임 비대) ② *모든* SubFormation에 같은 보정 코드 중복. 그래서 전략은
+이상위치만, 보정은 Spawner 공통(링 후보 → Nav 투영 → AdjustIfPossible). 새 배치형태 추가가 *순수
+위치계산 추가*로 줄고 보정은 공짜로 따라옴. 안전위치 못 찾으면 벽에 강제로 안 박고 포기+로그.
+"시스템이 뭘 *안 하는가*를 정하는 것도 설계"의 또 다른 사례. 자세히 ADR-0007.
+
 ---
 
-## ⚠️ 함정 노트 (다시 안 밟으려고)
+## ⚠️ 함정 노트 (실수 재발 방지)
 
 ### Detour / 컴포넌트 교체 (3주차)
 - **SetDefaultSubobjectClass의 이름 인자는 "부모가 만드는 서브오브젝트의 고정 이름"** — `TEXT("PathFollowingComponent")`여야. 딴 이름은 무시되고 기본 컴포넌트 뜸
@@ -175,6 +203,7 @@
 - **DataAsset에 Instanced UObject는 Outer 체인으로 GetWorld() 못 함** — UWorld* 명시적으로 넘겨야. 시그니처가 한계를 말해줌
 - **DataAsset = Flyweight** — 같은 Asset 참조하는 두 Component는 Instanced 멤버(Strategy 포함) 공유. Strategy가 슬롯별 상태 들면 서로 박살 → stateless 필수, 상태는 Component
 - **UPROPERTY `//` 주석이 UHT 툴팁 됨** (검증) — `///`나 `/** */` 불필요
+- **`CallInEditor` 스폰은 게임월드 아니면 `RF_Transient` 줘야** — 안 주면 에디터 프리뷰로 스폰한 적이 레벨에 영구 오브젝트로 박혀 저장됨. `GetWorld()->IsGameWorld()` 체크 후 비게임월드면 `SpawnParams.ObjectFlags |= RF_Transient`. 조합→즉시확인 루프의 전제
 
 ---
 
@@ -217,8 +246,7 @@ NavMesh는 절벽 끝에서 끊김.
 
 - **내 질문을 결정으로 추정하지 않게 — *탐색* 과 *결정* 분리. AI가 탐색에 같이 참여해야지 답 추정 안 함**
 - **반쪽짜리 해결책 안 함. 트레이드오프 명확히 인지 후 *의식적 선택***
-- ⭐ **메모는 키워드 말고 "왜"를 문장으로. 3주 뒤의 내가 못 읽는다**
-- ⭐ **보여줄 수 있는 상태(영상)를 먼저. 기능 추가는 그 다음** (영상 자꾸 밀림)
+- ⭐ **메모는 키워드 말고 "왜"를 문장으로. 나중에 내가 기억안날 수 있다**
 - **직감을 신뢰하고 끝까지 판다** — "배열 위화감"이 ADR-0002를, "Activate 정체"가 ADR-0003을 끌어냄. 코드 표면도 AI 확신도 진실 보장 안 함
 - **ADR은 동결 아니라 근거 보존** — 근거 남기면 미래에 떳떳이 수정. 막을 건 "맥락 모른 채 되돌리기"뿐
 
@@ -228,8 +256,8 @@ NavMesh는 절벽 끝에서 끊김.
 
 - 그랑블루 판타지 리링크 (4인 파티 액션)
 - 아크나이츠 엔드필드 (동료 AI 자연스러움 기준선)
-- AI Game Programming Wisdom 시리즈
+- Artificial Intelligence for Games(Ian Millington)
 
 ---
 
-🇺🇸 [English](./README.md) | 🇯🇵 [日本語版](./README.ja.md)
+🇺🇸 [English](./README.en.md) | 🇯🇵 [日本語版](./README.md)

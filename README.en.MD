@@ -29,6 +29,13 @@
 - **Decision/execution split for ranged repositioning** — an influence-map oracle decides *when* to relocate (commit gate); locomotion handles the actual movement. Eliminates mid-move stalls and frame-rotation twitch
 - **Omnidirectional influence-map positioning** for ranged units — no fixed front axis; candidates are scored 360° around the target by threat, ally proximity, and crowding
 
+**Enemy initial placement (spawn-time)**
+- **Composite formation built in place** — each `AEnemySpawner` holds an *inline* `FEnemyCompositeFormation`; designers add sub-formations (front row, back row…) with `+ / -` right in the Details panel and assign an enemy list + shape per row. Deliberately not a reusable preset asset — the goal was per-spawn-point editing, not reuse
+- **Data-driven placement shapes** — `Line` / `Circle` / `Arc` / `Scatter` as swappable `Instanced` strategies under `UEnemySubFormationBase`; the contract is one `BuildSlots` call (`BlueprintNativeEvent`, so new shapes can be added in BP without a C++ rebuild — reusing the same strategy pattern as the ally formations)
+- **Responsibility split (ideal position vs. resolution)** — placement shapes compute *only the ideal slots* and know nothing of the world; wall/obstacle/NavMesh resolution is handled in one place by the spawner. Adding a new shape stays pure position math — collision handling comes for free
+- **Never force-spawns inside a wall** — if a slot is blocked, the spawner searches outward in expanding rings and (optionally) projects onto the NavMesh; if no safe spot is found it *gives up and logs* rather than burying an enemy in geometry
+- **Author-and-verify loop in-editor** — spawn/clear are `CallInEditor`; outside PIE, previews spawn `RF_Transient` (no level pollution) and draw resolved positions as debug. Build → see → adjust, right in the viewport
+
 ---
 
 ## 🎯 Key Design Decisions
@@ -63,6 +70,14 @@ The first ranged-placement approach picked a front-facing direction and laid can
 
 *(Not yet implemented — rationale recorded ahead of time.)* Mode selection is a *commit-to-a-state* problem: enter Battle, stay there, transition only when conditions change. A Behavior Tree re-traverses from the root every tick to pick a leaf — great for reactive "what do I do right now," wrong for committed modes (you end up faking states with blackboard flags and re-entry guards). StateTree combines a Selector with explicit States/Transitions, with hysteresis and priority built in. The current `if/else` mode switch is a deliberate stepping stone toward it — built only once combat creates a genuine second state and transition.
 
+### Why enemy placement is built in the spawner, not chosen from a reusable preset
+
+The obvious shape is a preset asset (`Line+Circle`, etc.) that each spawn point references. Presets are strong for *reuse* — but enemy placement isn't a reuse problem. Spawning varied formations across different points is part of what makes encounters interesting, so reuse isn't automatically the right answer here; and the people authoring it are designers and planners, not programmers. The moment you want each point slightly different, a shared preset drags in duplication, override rules, variants, and sync between the asset and the spawner. *Reuse* and *in-place editing* are different goals, and this called for the latter — so the composite formation is inline data the spawner owns, edited and read in one place. (Placement intent is also expressed as data by the designer, never inferred at runtime from proximity — consistent with the enemy-group direction in [ADR-0006](./Docs/ADR/0006-enemy_group_combat_architecture.MD).) → [ADR-0007](./Docs/ADR/0007-enemy_spawn_composite_formation.MD)
+
+### Why placement shapes compute only ideal positions, with resolution pulled up to the spawner
+
+If `Line` / `Circle` resolved their own wall checks and NavMesh projection, every shape would have to know about world collision and the navigation system — and the *same* resolution code would be duplicated across all of them, re-implemented every time a shape is added. So shapes stay pure (ideal slots only) and the spawner owns wall/obstacle/NavMesh resolution in one place. Adding a shape becomes pure position math; collision handling follows for free. *Deciding what a component deliberately won't know is itself design.* → [ADR-0007](./Docs/ADR/0007-enemy_spawn_composite_formation.MD)
+
 <details>
 <summary>Other decisions (folded)</summary>
 
@@ -94,6 +109,7 @@ Real game-feel issues observed during development. Full detail — why each occu
 - Up-ledge tactical traversal (arc launch + Bézier steering)
 - Battle formation: mode switching, target-relative placement, set-based vs. per-member assignment
 - Decision/execution split (commit gate) and omnidirectional influence-map positioning for ranged units
+- Enemy initial placement: in-spawner composite formation, Line/Circle/Arc/Scatter shapes, wall/NavMesh spawn resolution
 
 **Next**
 - Down-ledge traversal (see Open Problems)
@@ -103,6 +119,7 @@ Real game-feel issues observed during development. Full detail — why each occu
 **Following** (ordered)
 - **StateTree decision layer** — migrate mode selection out of the component into StateTree (rationale under Key Design Decisions). The current `if/else` is a deliberate stepping stone.
 - **Movement-intent arbitration** — generalize the per-unit commit model into a single resolver that mediates competing movement intents (attack / dodge / traversal / home) by priority and interruptibility.
+- **Enemy group combat — decoupling strategy from type** — group combat policy isn't fixed to monster type; individual temperament (engagement range, flee threshold) stays on the monster while group formation (encircle / spread) is placement data. Built on top of spawn-time placement (done), adding slot-anchor memory → target/anchor repositioning → in-combat behavior. Order: combat → StateTree → this. Key contract: the group strategy emits intent (slot/target/posture) only, never calling GAS abilities directly. → [ADR-0006](./Docs/ADR/0006-enemy_group_combat_architecture.MD) / [ADR-0007](./Docs/ADR/0007-enemy_spawn_composite_formation.MD)
 - **Enemy formation (Flock-based)** — leaderless group movement, reusing infrastructure via the shared character base.
 - Lower priority: `UYieldStrategy_Narrow` (corridor flip); NavLink-aware jump; NavMesh edge avoidance; skill chaining.
 
@@ -116,4 +133,4 @@ Real game-feel issues observed during development. Full detail — why each occu
 
 ---
 
-🇯🇵 [日本語版](./README.ja.md) | 🇰🇷 [개인 로드맵](./README.ko.md)
+🇯🇵 [日本語版](./README.MD) | 🇰🇷 [개인 로드맵](./README.ko.md)
