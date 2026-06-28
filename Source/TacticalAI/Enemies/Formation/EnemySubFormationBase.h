@@ -3,10 +3,10 @@
 #include "CoreMinimal.h"
 #include "Enemies/Formation/EnemyFormationTypes.h"
 #include "UObject/Object.h"
-#include "EnemySubFormationStrategy.generated.h"
+#include "EnemySubFormationBase.generated.h"
 
 // =========================================================================
-// Enemy SubFormation Strategy
+// Enemy SubFormation Base
 //
 // SubFormation 안에서 필요한 수만큼 슬롯을 생성한다.
 // 기준 Transform은 호출자가 정해서 넘긴다.
@@ -15,7 +15,7 @@
 // 基準Transformは呼び出し側が決めて渡す。
 // =========================================================================
 UCLASS(Abstract, BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced)
-class TACTICALAI_API UEnemySubFormationStrategy : public UObject
+class TACTICALAI_API UEnemySubFormationBase : public UObject
 {
 	GENERATED_BODY()
 

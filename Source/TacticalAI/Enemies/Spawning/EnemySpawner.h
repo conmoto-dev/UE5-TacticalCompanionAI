@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Enemies/Formation/EnemyFormationTypes.h"
-#include "Enemies/Formation/EnemySubFormationStrategy.h"
+#include "Enemies/Formation/EnemySubFormationBase.h"
 #include "GameFramework/Actor.h"
 #include "EnemySpawner.generated.h"
 
@@ -105,7 +105,7 @@ private:
 
 	// Spawner 안에서 직접 편집하는 복합 Formation.
 	// Spawner内で直接編集する複合Formation。
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Formation",
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
 		meta = (
 			AllowPrivateAccess = "true",
 			EditCondition = "FormationMode == EEnemyFormationMode::CompositeFormation",

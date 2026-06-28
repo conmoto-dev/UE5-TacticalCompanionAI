@@ -1,5 +1,6 @@
 #include "Enemies/Formation/EnemySubFormation_Arc.h"
 
+
 TArray<FEnemyFormationSlot> UEnemySubFormation_Arc::BuildSlots_Implementation(
 	const FTransform& SubFormationWorldTransform,
 	const int32 SlotCount) const

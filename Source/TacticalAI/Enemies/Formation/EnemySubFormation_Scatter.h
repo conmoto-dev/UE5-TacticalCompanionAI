@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Enemies/Formation/EnemySubFormationStrategy.h"
+#include "Enemies/Formation/EnemySubFormationBase.h"
 #include "EnemySubFormation_Scatter.generated.h"
 
 // =========================================================================
@@ -19,7 +19,7 @@ enum class EEnemyScatterFacingMode : uint8
 };
 
 // =========================================================================
-// Enemy SubFormation Strategy - Scatter
+// Enemy SubFormation - Scatter
 //
 // SubFormation 기준점 주변에 슬롯을 랜덤하게 흩뿌린다.
 // 후보 지점 중 기존 슬롯과 가장 멀리 떨어진 지점을 우선 사용한다.
@@ -28,7 +28,7 @@ enum class EEnemyScatterFacingMode : uint8
 // 候補点の中から既存スロットと最も離れた位置を優先する。
 // =========================================================================
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced, meta = (DisplayName = "Scatter"))
-class TACTICALAI_API UEnemySubFormationStrategy_Scatter : public UEnemySubFormationStrategy
+class TACTICALAI_API UEnemySubFormation_Scatter : public UEnemySubFormationBase
 {
 	GENERATED_BODY()
 

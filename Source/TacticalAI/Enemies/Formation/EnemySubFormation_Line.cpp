@@ -1,9 +1,7 @@
-#include "Enemies/Formation/EnemySubFormationStrategy_Line.h"
+#include "Enemies/Formation/EnemySubFormation_Line.h"
 
-// =========================================================================
-// UEnemySubFormationStrategy_Line
-// =========================================================================
-TArray<FEnemyFormationSlot> UEnemySubFormationStrategy_Line::BuildSlots_Implementation(
+
+TArray<FEnemyFormationSlot> UEnemySubFormation_Line::BuildSlots_Implementation(
 	const FTransform& SubFormationWorldTransform,
 	const int32 SlotCount) const
 {

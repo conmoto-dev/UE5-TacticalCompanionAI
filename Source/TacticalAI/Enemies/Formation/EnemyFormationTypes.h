@@ -5,7 +5,7 @@
 #include "EnemyFormationTypes.generated.h"
 
 class AEnemyCharacter;
-class UEnemySubFormationStrategy;
+class UEnemySubFormationBase;
 
 // =========================================================================
 // Enemy Formation Mode
@@ -147,7 +147,7 @@ public:
 	// このSubFormationのスロット生成方式。
 	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly, Category = "Enemy AI|SubFormation",
 		meta = (DisplayName = "SubFormation"))
-	TObjectPtr<UEnemySubFormationStrategy> SubFormationStrategy = nullptr;
+	TObjectPtr<UEnemySubFormationBase> SubFormationStrategy = nullptr;
 };
 
 // =========================================================================

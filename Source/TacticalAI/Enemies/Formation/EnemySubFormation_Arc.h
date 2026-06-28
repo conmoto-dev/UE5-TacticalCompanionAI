@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Enemies/Formation/EnemySubFormationStrategy.h"
+#include "Enemies/Formation/EnemySubFormationBase.h"
 #include "EnemySubFormation_Arc.generated.h"
 
 // =========================================================================
@@ -28,7 +28,7 @@ enum class EEnemyArcFacingMode : uint8
 // SlotCountが1の場合はCenter Angleの位置に1つだけ配置する。
 // =========================================================================
 UCLASS(BlueprintType, Blueprintable, EditInlineNew, DefaultToInstanced, meta = (DisplayName = "Arc"))
-class TACTICALAI_API UEnemySubFormation_Arc : public UEnemySubFormationStrategy
+class TACTICALAI_API UEnemySubFormation_Arc : public UEnemySubFormationBase
 {
 	GENERATED_BODY()
 

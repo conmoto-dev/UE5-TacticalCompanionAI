@@ -1,6 +1,7 @@
 #include "Enemies/Formation/EnemySubFormation_Scatter.h"
 
-TArray<FEnemyFormationSlot> UEnemySubFormationStrategy_Scatter::BuildSlots_Implementation(
+
+TArray<FEnemyFormationSlot> UEnemySubFormation_Scatter::BuildSlots_Implementation(
 	const FTransform& SubFormationWorldTransform,
 	const int32 SlotCount) const
 {
@@ -49,7 +50,7 @@ TArray<FEnemyFormationSlot> UEnemySubFormationStrategy_Scatter::BuildSlots_Imple
 	return Slots;
 }
 
-FVector UEnemySubFormationStrategy_Scatter::PickScatterLocation(
+FVector UEnemySubFormation_Scatter::PickScatterLocation(
 	FRandomStream& RandomStream,
 	const TArray<FVector>& ExistingLocations,
 	const FVector& Center,
@@ -94,7 +95,7 @@ FVector UEnemySubFormationStrategy_Scatter::PickScatterLocation(
 	return BestLocation;
 }
 
-FVector UEnemySubFormationStrategy_Scatter::MakeRandomPointInCircle(
+FVector UEnemySubFormation_Scatter::MakeRandomPointInCircle(
 	FRandomStream& RandomStream,
 	const FVector& Center,
 	const FVector& ForwardVector,
@@ -112,7 +113,7 @@ FVector UEnemySubFormationStrategy_Scatter::MakeRandomPointInCircle(
 	return Center + LocalDirection * RandomRadius;
 }
 
-float UEnemySubFormationStrategy_Scatter::CalculateNearestDistanceSquared(
+float UEnemySubFormation_Scatter::CalculateNearestDistanceSquared(
 	const FVector& CandidateLocation,
 	const TArray<FVector>& ExistingLocations) const
 {
@@ -129,7 +130,7 @@ float UEnemySubFormationStrategy_Scatter::CalculateNearestDistanceSquared(
 	return NearestDistanceSquared;
 }
 
-FQuat UEnemySubFormationStrategy_Scatter::MakeSlotRotation(
+FQuat UEnemySubFormation_Scatter::MakeSlotRotation(
 	FRandomStream& RandomStream,
 	const FTransform& SubFormationWorldTransform,
 	const FVector& SlotLocation) const

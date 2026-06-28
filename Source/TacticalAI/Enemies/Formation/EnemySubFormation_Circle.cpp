@@ -1,6 +1,7 @@
-#include "Enemies/Formation/EnemySubFormationStrategy_Circle.h"
+#include "Enemies/Formation/EnemySubFormation_Circle.h"
 
-TArray<FEnemyFormationSlot> UEnemySubFormationStrategy_Circle::BuildSlots_Implementation(
+
+TArray<FEnemyFormationSlot> UEnemySubFormation_Circle::BuildSlots_Implementation(
 	const FTransform& SubFormationWorldTransform,
 	const int32 SlotCount) const
 {
