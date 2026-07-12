@@ -1,6 +1,6 @@
 #include "AI/Components/FormationBattleComponent.h"
 #include "AI/Strategies/SlotGeneratorStrategy.h"
-#include "Enemies/TargetDummy.h"   // TODO: 인터페이스로 분리 (구현체 2개째 생기면)
+#include "AI/Targeting/Targetable.h"
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
 #include "AI/CombatRoleTags.h"
@@ -347,10 +347,15 @@ float UFormationBattleComponent::ComputeBaseRadius() const
 {
 	float TargetRadius = 0.f;
 
-	// TODO: ATargetDummy 직접 캐스트 = 결합. 진짜 적 추가 시 IEncircleTarget 인터페이스로 분리.
-	if (const ATargetDummy* Dummy = Cast<ATargetDummy>(CurrentTarget.Get()))
+	// 타겟이 ITargetable이면 자기 포위 반경을 답한다. 구체 타입 캐스트 없음 —
+	// Formation은 타겟이 적인지 더미인지 기믹인지 모른다.
+	// 具体型キャストなし。Formationは対象の種類を知らない。
+	if (AActor* Target = CurrentTarget.Get())
 	{
-		TargetRadius = Dummy->GetEncircleRadius();
+		if (Target->Implements<UTargetable>())
+		{
+			TargetRadius = ITargetable::Execute_GetEncircleRadius(Target);
+		}
 	}
 
 	return DesignerBaseRadius + TargetRadius;

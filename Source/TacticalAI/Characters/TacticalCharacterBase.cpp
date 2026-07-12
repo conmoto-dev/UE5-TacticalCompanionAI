@@ -29,3 +29,16 @@ ATacticalCharacterBase::ATacticalCharacterBase()
 	MoveComp->BrakingDecelerationWalking = 2000.f;
 	MoveComp->BrakingDecelerationFalling = 1500.f;
 }
+
+bool ATacticalCharacterBase::IsTargetable_Implementation() const
+{
+	// 현재는 "파괴 = 사망" 단계라 존재하는 캐릭터는 항상 타겟 가능.
+	// HP·사망 상태가 생기면 이 함수의 내부만 교체 — 호출부 계약은 유지.
+	// 現状は「破壊＝死亡」段階のため常にtrue。HP導入時に内部だけ差し替え。
+	return true;
+}
+
+float ATacticalCharacterBase::GetEncircleRadius_Implementation() const
+{
+	return EncircleRadius;
+}
