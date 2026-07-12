@@ -1,4 +1,5 @@
 #include "Enemies/Spawning/EnemySpawner.h"
+#include "Enemies/Group/EnemyGroup.h"
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -20,6 +21,8 @@ AEnemySpawner::AEnemySpawner()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
+	EnemyGroupClass = AEnemyGroup::StaticClass();
+	
 #if WITH_EDITORONLY_DATA
 	EditorArrow = CreateEditorOnlyDefaultSubobject<UArrowComponent>(TEXT("EditorArrow"));
 
@@ -69,6 +72,11 @@ void AEnemySpawner::SpawnEnemies()
 	default:
 		break;
 	}
+	
+	if (GetWorld()->IsGameWorld())
+	{
+		RegisterSpawnedEnemiesToGroup();
+	}
 }
 
 void AEnemySpawner::ClearSpawnedEnemies()
@@ -80,6 +88,12 @@ void AEnemySpawner::ClearSpawnedEnemies()
 			SpawnedEnemy->Destroy();
 		}
 	}
+	
+	if (IsValid(SpawnedGroup))
+	{
+		SpawnedGroup->Destroy();
+	}
+	SpawnedGroup = nullptr;
 
 	SpawnedEnemies.Reset();
 }
@@ -387,6 +401,42 @@ int32 AEnemySpawner::GetTotalSpawnCount(const TArray<FEnemySpawnEntry>& Entries)
 	}
 
 	return TotalCount;
+}
+
+void AEnemySpawner::RegisterSpawnedEnemiesToGroup()
+{
+	if (!EnemyGroupClass)
+	{
+		UE_LOG(LogEnemySpawner, Warning,
+			TEXT("EnemyGroupClassが未設定のためグループを生成できません。Spawner=%s"), *GetName());
+		return;
+	}
+
+	// [1] 그룹이 없으면 스포너 위치에 생성. 이후 스포너는 지휘하지 않는다 —
+	//     그룹 상태·전략은 전부 AEnemyGroup의 책임 (스포너는 공장까지만).
+	// グループ未生成なら生成。以後Spawnerは指揮しない（工場まで）。
+	if (!IsValid(SpawnedGroup))
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnedGroup = GetWorld()->SpawnActor<AEnemyGroup>(
+			EnemyGroupClass.Get(), GetActorTransform(), SpawnParams);
+	}
+
+	if (!IsValid(SpawnedGroup))
+	{
+		return;
+	}
+
+	// [2] 이번에 스폰된 전원을 등록. 그룹 경계 = 이 스폰 풀 (ADR-0006).
+	// 今回スポーンした全員を登録。グループ境界＝このスポーンプール。
+	for (const TObjectPtr<AEnemyCharacter>& Enemy : SpawnedEnemies)
+	{
+		if (IsValid(Enemy))
+		{
+			SpawnedGroup->RegisterMember(Enemy);
+		}
+	}
 }
 
 TArray<FTransform> AEnemySpawner::BuildSpawnResolveCandidates(

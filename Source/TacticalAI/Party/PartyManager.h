@@ -10,6 +10,7 @@ class APartyCharacter;
 class UFormationDataAsset;
 class UFormationFollowComponent;
 class UFormationBattleComponent;
+class UPartyPerceptionComponent;
 
 UENUM(BlueprintType)
 enum class EPartyFormationMode : uint8
@@ -70,6 +71,9 @@ public:
 	/** 知覚した敵全体を返す。モード判断・隊形・将来のターゲティングが共有する単一ソース。 */
 	TArray<AActor*> GetPerceivedEnemies() const;
 	
+	// public 게터 추가 (추후 타겟 시스템이 그룹 단위 조회할 창구):
+	UPartyPerceptionComponent* GetPerception() const { return PerceptionComponent; }
+	
 protected:
 	/** Formation system component. Performs slot calculation and pushes targets to followers. */
 	/** 隊形システム。スロット算出と仲間への目標座標プッシュを担当。 */
@@ -81,11 +85,10 @@ protected:
 	
 	/** Detect Battle State by Leader - Nearest Enemy Distance. */
 
-	// [임시 검증] 인지한 적 목록. 에디터에서 수동 지정.
-	// 나중에 [1] 적 감지(Perception)로 내부 구현만 대체 — GetPerceivedEnemies API는 유지.
-	// [仮] 知覚した敵リスト。後でPerceptionに差し替えるが、APIは維持する。
-	UPROPERTY(EditAnywhere, Category="Formation|Debug")
-	TArray<TObjectPtr<AActor>> DebugPerceivedEnemies;
+	/** 적 그룹 인지 시스템. GetPerceivedEnemies의 실제 공급자. */
+	/** 敵グループ知覚システム。GetPerceivedEnemiesの実供給元。 */
+	UPROPERTY(VisibleAnywhere, Category="Perception")
+	TObjectPtr<UPartyPerceptionComponent> PerceptionComponent;
 
 	// 전투 진입 거리 (이보다 가까우면 Battle).
 	UPROPERTY(EditAnywhere, Category="Formation|Switching", meta=(ClampMin="0.0"))

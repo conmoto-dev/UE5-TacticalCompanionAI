@@ -6,6 +6,7 @@
 #include "EnemyCharacter.generated.h"
 
 class UEnemyFormationStrategy;
+class AEnemyGroup;
 
 // =========================================================================
 // 적 캐릭터 베이스.
@@ -19,6 +20,17 @@ class TACTICALAI_API AEnemyCharacter : public ATacticalCharacterBase
 public:
 	AEnemyCharacter();
 
+	// =========================================================================
+	// 소속 그룹 back-ptr.
+	// 소유가 아니므로 TWeakObjectPtr — 그룹이 먼저 사라져도 자동 무효화.
+	// 설정은 AEnemyGroup::RegisterMember 경유만 (캐릭터가 스스로 정하지 않음).
+	//
+	// 所属グループへのback-ptr。所有ではないためTWeakObjectPtr。
+	// 設定はRegisterMember経由のみ（キャラ側では決めない）。
+	// =========================================================================
+	void SetEnemyGroup(AEnemyGroup* InGroup);
+	AEnemyGroup* GetEnemyGroup() const;
+	
 	// =========================================================================
 	// 개별 공격 행동에서 참고할 선호 교전 사거리.
 	//
@@ -54,6 +66,9 @@ public:
 	}
 
 private:
+	
+	TWeakObjectPtr<AEnemyGroup> OwningGroup;
+	
 	// =========================================================================
 	// 적 종류의 전투 성향.
 	//

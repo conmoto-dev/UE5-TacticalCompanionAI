@@ -1,7 +1,8 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "Party/PartyManager.h"
+#include "Party/PartyPerceptionComponent.h"
 #include "Characters/PartyCharacter.h"
+#include "Enemies/Group/EnemyGroup.h"
+#include "Characters/EnemyCharacter.h"
 #include "AI/Components/FormationFollowComponent.h"
 #include "AI/Components/FormationBattleComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -13,6 +14,8 @@ APartyManager::APartyManager()
 	
 	FollowComponent = CreateDefaultSubobject<UFormationFollowComponent>(TEXT("FollowComp"));
 	BattleComponent = CreateDefaultSubobject<UFormationBattleComponent>(TEXT("BattleComp"));
+	
+	PerceptionComponent = CreateDefaultSubobject<UPartyPerceptionComponent>(TEXT("PerceptionComponent"));
 }
 
 void APartyManager::BeginPlay()
@@ -76,20 +79,19 @@ TArray<APartyCharacter*> APartyManager::GetFollowers() const
 
 TArray<AActor*> APartyManager::GetPerceivedEnemies() const
 {
-	// IsValid 필터 — 에디터 지정 적이 런타임에 파괴될 수 있음 (처치 등).
-	// 호출자는 항상 살아있는 적만 받는다는 계약.
+	// 인지된 그룹의 생존 멤버를 평탄화. "살아있는 적만"이라는 기존 계약 유지 —
+	// 호출자(모드 결정·Formation)는 이 변경을 모른다.
+	// 知覚グループの生存メンバーを平坦化。既存契約はそのまま維持。
 	TArray<AActor*> Result;
-	Result.Reserve(DebugPerceivedEnemies.Num());
-	for (AActor* Enemy : DebugPerceivedEnemies)
+	for (const AEnemyGroup* Group : PerceptionComponent->GetPerceivedGroups())
 	{
-		if (IsValid(Enemy))
+		for (AEnemyCharacter* Member : Group->GetAliveMembers())
 		{
-			Result.Add(Enemy);
+			Result.Add(Member);
 		}
 	}
 	return Result;
 }
-
 
 //** Formation Change Algorithm *//
 void APartyManager::SetFormationMode(EPartyFormationMode NewMode)
