@@ -30,6 +30,15 @@ struct TACTICALAI_API FTargetingContext
 
 	UPROPERTY(BlueprintReadOnly, Category = "Targeting")
 	bool bHasLeader = false;
+	
+	// 리더가 현재 잡은 타겟. 자신이 리더인 컨텍스트에서는 항상 비어 있음.
+	// リーダーの現在ターゲット。自分がリーダーの場合は常に空（自己参照ループ遮断）。
+	UPROPERTY(BlueprintReadOnly, Category = "Targeting")
+	TObjectPtr<const AActor> LeaderTarget = nullptr;
+	
+	// 自分以外のパーティメンバーの現在ターゲット（リーダー含む）。
+	UPROPERTY(BlueprintReadOnly, Category = "Targeting")
+	TArray<TObjectPtr<const AActor>> AllyTargets;
 };
 
 // =========================================================================

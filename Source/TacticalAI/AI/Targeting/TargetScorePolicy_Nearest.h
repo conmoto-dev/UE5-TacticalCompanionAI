@@ -7,7 +7,7 @@
 // =========================================================================
 // 自位置基準の近接優先。
 // =========================================================================
-UCLASS()
+UCLASS(meta = (DisplayName = "Nearest"))
 class TACTICALAI_API UTargetScorePolicy_Nearest : public UTargetScorePolicy
 {
 	GENERATED_BODY()

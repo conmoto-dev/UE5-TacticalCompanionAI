@@ -150,7 +150,7 @@ public:
 protected:
 	/** 타겟 선정 컴포넌트. 정책 조합·가중치는 BP 인스턴스에서 편집. */
 	/** ターゲット選定コンポーネント。ポリシー構成はBPで編集。 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(VisibleAnywhere, Category = "Targeting")
 	TObjectPtr<UPartyTargetSelectorComponent> TargetSelector;
 
 private:
