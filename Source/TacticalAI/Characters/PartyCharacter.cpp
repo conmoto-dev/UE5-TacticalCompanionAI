@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "Characters/PartyCharacter.h"
 #include "Controllers/CompanionAIController.h"
 #include "AIController.h"
@@ -13,6 +11,8 @@
 #include "AI/Components/PlayerCrowdAgentComponent.h"
 #include "AI/CombatRoleTags.h"
 #include "TacticalAI.h"   // LogTacticalAI
+#include "AI/Targeting/PartyTargetSelectorComponent.h"
+#include "Party/PartyManager.h"
 
 APartyCharacter::APartyCharacter()
 {
@@ -45,6 +45,8 @@ APartyCharacter::APartyCharacter()
 	// 역할 기본값. 헤더 초기화 불가(Native Tag는 모듈 로드 후 유효)라 생성자에서 대입.
 	// 役割の既定値。Native Tagはモジュールロード後に有効なため、ここで代入。
 	CombatRole = CombatRoleTags::Melee;
+	
+	TargetSelector = CreateDefaultSubobject<UPartyTargetSelectorComponent>(TEXT("TargetSelector"));
 }
 
 void APartyCharacter::BeginPlay()
@@ -149,4 +151,19 @@ void APartyCharacter::UpdateTargetSlotLocation(const FVector& NewTarget, bool bF
 
 	CurrentTargetLocation = NewTarget;
 	AIC->MoveToLocation(NewTarget, AcceptanceRadius);
+}
+
+void APartyCharacter::SetPartyManager(APartyManager* InManager)
+{
+	OwningPartyManager = InManager;
+}
+
+APartyManager* APartyCharacter::GetPartyManager() const
+{
+	return OwningPartyManager.Get();
+}
+
+UTargetSelectorComponent* APartyCharacter::GetTargetSelector() const
+{
+	return TargetSelector;
 }

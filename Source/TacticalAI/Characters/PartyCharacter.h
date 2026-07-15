@@ -11,6 +11,9 @@ class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
 struct FInputActionValue;
+class APartyManager;
+class UTargetSelectorComponent;
+class UPartyTargetSelectorComponent;
 
 /**
  * 동료(파티) 캐릭터. 진형에서 수동적 — 좌표를 FormationFollowComponent에서 받아
@@ -132,4 +135,24 @@ private:
 	// 基準射程。スキル別射程は後の行動レイヤーで上書き。
 	UPROPERTY(EditAnywhere, Category="Combat", meta=(ClampMin="0.0"))
 	float AttackRange = 100.f;
+	
+	
+public:
+	// 소속 매니저 back-ref. 설정은 PartyManager 등록 경유.
+	// 所属Managerへのback-ref。設定はManager登録経由のみ。
+	void SetPartyManager(APartyManager* InManager);
+	APartyManager* GetPartyManager() const;
+
+	// 게터는 베이스 타입 반환 — 소비자(Formation)가 진영 자식을 모르게.
+	// getterは基底型を返す — 消費側が陣営子クラスを知らないように。
+	UTargetSelectorComponent* GetTargetSelector() const;
+
+protected:
+	/** 타겟 선정 컴포넌트. 정책 조합·가중치는 BP 인스턴스에서 편집. */
+	/** ターゲット選定コンポーネント。ポリシー構成はBPで編集。 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Targeting")
+	TObjectPtr<UPartyTargetSelectorComponent> TargetSelector;
+
+private:
+	TWeakObjectPtr<APartyManager> OwningPartyManager;
 };

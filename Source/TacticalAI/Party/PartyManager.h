@@ -11,6 +11,7 @@ class UFormationDataAsset;
 class UFormationFollowComponent;
 class UFormationBattleComponent;
 class UPartyPerceptionComponent;
+class UTargetSelectorComponent;
 
 UENUM(BlueprintType)
 enum class EPartyFormationMode : uint8
@@ -82,6 +83,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category="Formation")
 	TObjectPtr<UFormationBattleComponent> BattleComponent;
+	
+	void TickTargetBridge();
 	
 	/** Detect Battle State by Leader - Nearest Enemy Distance. */
 
