@@ -6,6 +6,24 @@
 
 class AEnemyCharacter;
 class AEnemyGroup;
+class APawn;
+
+// 적 그룹의 전황 상태. 그룹이 유일한 소유자 — 멤버는 상태를 갖지 않고 읽기만 한다.
+// 敵グループの戦況状態。所有者はグループのみ — メンバーは状態を持たず読むだけ。
+UENUM(BlueprintType)
+enum class EEnemyGroupState : uint8
+{
+	Idle,      // 평시
+	Alert,     // 경계 (인지했으나 미교전)
+	Engaged,   // 교전·추격
+	Return,    // 포기·복귀
+};
+
+// 상태 전이 통지. 개별 행동(추후 StateTree)·적 진형 전환·디버그가 구독한다.
+// 状態遷移通知。個体行動(将来StateTree)・敵隊形切替・デバッグが購読。
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEnemyGroupStateChanged,
+	AEnemyGroup*, Group, EEnemyGroupState, OldState, EEnemyGroupState, NewState);
+
 
 // 그룹 전멸 통지. 파티 인지 등 외부 리스너가 구독한다.
 // グループ全滅通知。パーティ知覚など外部リスナーが購読する。
@@ -57,6 +75,24 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Enemy Group")
 	FOnEnemyGroupDefeated OnGroupDefeated;
 
+	// =========================================================================
+	// 전황 상태 (Step A)
+	// 전이 구동은 딱 2경로: ① 저주기 자기 감지(플레이어 기준 거리) ② 피격 이벤트.
+	// 파티가 이 상태를 쓰는 일은 없다 — 파티→그룹은 읽기 전용 (ADR-0008).
+	// 遷移駆動は2経路のみ：①低頻度の自己感知 ②被弾イベント。
+	// =========================================================================
+	UFUNCTION(BlueprintCallable, Category = "Enemy Group")
+	EEnemyGroupState GetGroupState() const { return GroupState; }
+
+	/** 피격 통지. 어느 상태에서든 즉시 교전 진입 (기습 경로).
+	 *  호출자는 추후 전투 시스템 — 지금은 테스트용 수동 호출. */
+	/** 被弾通知。どの状態からでも即時交戦へ（奇襲経路）。 */
+	UFUNCTION(BlueprintCallable, Category = "Enemy Group")
+	void NotifyAttackedBy(AActor* Attacker);
+
+	UPROPERTY(BlueprintAssignable, Category = "Enemy Group")
+	FOnEnemyGroupStateChanged OnGroupStateChanged;
+	
 protected:
 	virtual void BeginPlay() override;
 
@@ -69,7 +105,16 @@ private:
 
 	void DrawDebugGroup() const;
 
+	void TickSensing(float DeltaTime);
+	void SetGroupState(EEnemyGroupState NewState);
+	const APawn* GetSensedPlayerPawn() const;
+	bool AreAllMembersNearAnchor() const;
+	
 private:
+	// =========================================================================
+	// Enemy Group Member
+	// =========================================================================
+	
 	// 멤버 명부. TObjectPtr UPROPERTY라 액터 파괴 시 자동 null —
 	// 조회는 항상 IsValid 필터를 거친다.
 	// メンバー名簿。Actor破壊時に自動でnullになるため、照会は常にIsValidを通す。
@@ -80,4 +125,46 @@ private:
 	// グループのデバッグ表示（メンバー接続線）。有効時のみTickが動く。
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Debug")
 	bool bDrawDebugGroup = false;
+	
+	// =========================================================================
+	// Enemy Group State
+	// =========================================================================
+
+	// 경계 진입 거리. 플레이어가 이 안에 들어오면 Idle → Alert.
+	// 警戒開始距離。プレイヤーがこの内側に入るとIdle→Alert。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.0", Units = "cm"))
+	float AlertEnterDistance = 1700.f;
+
+	// 경계 해제 거리. 진입보다 커야 함 (히스테리시스).
+	// 警戒解除距離。開始より大きいこと（ヒステリシス）。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.0", Units = "cm"))
+	float AlertExitDistance = 2200.f;
+
+	// 교전 진입 거리. 플레이어가 이 안이면 Alert/Return → Engaged.
+	// 交戦開始距離。この内側でAlert/Return→Engaged。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.0", Units = "cm"))
+	float EngageDistance = 1000.f;
+
+	// 추격 포기 거리 (스폰 앵커 기준). 플레이어가 홈에서 이보다 멀면 Engaged → Return.
+	// "내가 홈에서 너무 벗어남" 판정은 적 이동 도입 시 추가.
+	// 追跡諦め距離（スポーンアンカー基準）。「自分が離れすぎ」判定は移動導入時に追加。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.0", Units = "cm"))
+	float ChaseGiveUpDistance = 2500.f;
+
+	// 복귀 완료 반경. 생존 전원이 앵커의 이 안이면 Return → Idle.
+	// 帰還完了半径。生存全員がこの内側でReturn→Idle。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.0", Units = "cm"))
+	float ReturnHomeRadius = 700.f;
+	
+	// 感知周期（秒）。
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy Group|Sensing", meta = (ClampMin = "0.05", Units = "s"))
+	float SensingInterval = 0.25f;
+
+	// 현재 전황 상태. 변경은 SetGroupState 단일 경로만.
+	// 現在の戦況状態。変更はSetGroupState経由のみ。
+	EEnemyGroupState GroupState = EEnemyGroupState::Idle;
+
+	// 다음 감지까지 남은 시간. 첫 감지를 랜덤 위상으로 시작해 그룹 간 동기화 방지.
+	// 次感知までの残時間。初回をランダム位相にしグループ間の同期を防ぐ。
+	float TimeUntilNextSense = 0.f;
 };

@@ -1,5 +1,7 @@
 #include "Enemies/Group/EnemyGroup.h"
 #include "Characters/EnemyCharacter.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/Pawn.h"
 #include "DrawDebugHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEnemyGroup, Log, All);
@@ -19,14 +21,20 @@ AEnemyGroup::AEnemyGroup()
 void AEnemyGroup::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	TimeUntilNextSense = FMath::FRandRange(0.f, SensingInterval);
 }
 
 void AEnemyGroup::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	
-	if (!CVarDebugEnemyGroup.GetValueOnGameThread()) return;
-	DrawDebugGroup();
+	TickSensing(DeltaTime);
+
+	if (CVarDebugEnemyGroup.GetValueOnGameThread())
+	{
+		DrawDebugGroup();
+	}
 }
 
 void AEnemyGroup::RegisterMember(AEnemyCharacter* Member)
@@ -97,4 +105,116 @@ void AEnemyGroup::DrawDebugGroup() const
 	{
 		DrawDebugLine(GetWorld(), Origin, Member->GetActorLocation(), FColor::Orange, false, -1.f);
 	}
+	
+	// TacticalAI.DebugEnemyGroup 1
+	// 状態をアンカー上にテキスト表示。
+	static const TMap<EEnemyGroupState, FColor> StateColors = {
+		{ EEnemyGroupState::Idle, FColor::Silver }, { EEnemyGroupState::Alert, FColor::Yellow },
+		{ EEnemyGroupState::Engaged, FColor::Red }, { EEnemyGroupState::Return, FColor::Cyan } };
+	DrawDebugString(GetWorld(), Origin + FVector(0, 0, 120.f),
+		UEnum::GetValueAsString(GroupState), nullptr, StateColors[GroupState], 0.f);
+}
+
+void AEnemyGroup::TickSensing(float DeltaTime)
+{
+	TimeUntilNextSense -= DeltaTime;
+	if (TimeUntilNextSense > 0.f || IsDefeated())
+	{
+		return;
+	}
+	TimeUntilNextSense = SensingInterval;
+
+	// [1] 감지 대상 = 플레이어 폰 (엔진 API — 파티 타입 의존 없음, ADR-0008 의존 방향 유지).
+	//     전투 시작·이탈이 플레이어 기준이라는 파티 측 규칙과 대칭.
+	// 感知対象＝プレイヤーPawn（エンジンAPIのみ — パーティ型への依存なし）。
+	const APawn* Player = GetSensedPlayerPawn();
+	if (!Player)
+	{
+		return;
+	}
+
+	const FVector Anchor = GetActorLocation();
+	const float DistToNearestMember = [&]()
+	{
+		float Best = TNumericLimits<float>::Max();
+		for (const AEnemyCharacter* Member : GetAliveMembers())
+		{
+			Best = FMath::Min(Best, FVector::Dist(Player->GetActorLocation(), Member->GetActorLocation()));
+		}
+		return Best;
+	}();
+	const float DistToAnchor = FVector::Dist(Player->GetActorLocation(), Anchor);
+
+	// [2] 상태별 전이 판정. Exit < Enter 설정 실수는 Enter 거리로 방어.
+	// 状態別の遷移判定。Exit<Enterの設定ミスはEnter距離で防御。
+	const float SafeAlertExit = FMath::Max(AlertExitDistance, AlertEnterDistance);
+
+	switch (GroupState)
+	{
+	case EEnemyGroupState::Idle:
+		if (DistToNearestMember <= AlertEnterDistance) SetGroupState(EEnemyGroupState::Alert);
+		break;
+
+	case EEnemyGroupState::Alert:
+		if (DistToNearestMember <= EngageDistance)     SetGroupState(EEnemyGroupState::Engaged);
+		else if (DistToNearestMember > SafeAlertExit)  SetGroupState(EEnemyGroupState::Idle);
+		break;
+
+	case EEnemyGroupState::Engaged:
+		// 追跡諦めのみアンカー基準。
+		if (DistToAnchor > ChaseGiveUpDistance)        SetGroupState(EEnemyGroupState::Return);
+		break;
+
+	case EEnemyGroupState::Return:
+		if (DistToNearestMember <= EngageDistance)     SetGroupState(EEnemyGroupState::Engaged);
+		else if (AreAllMembersNearAnchor())            SetGroupState(EEnemyGroupState::Idle);
+		break;
+	}
+}
+
+void AEnemyGroup::NotifyAttackedBy(AActor* Attacker)
+{
+	// 적 그룹 일원이 피격당하면 어느 상태에서든 즉시 교전. 공격자 축적은 Step B에서 소비자와 함께.
+	// どの状態からでも即時交戦へ。
+	if (IsDefeated())
+	{
+		return;
+	}
+	UE_LOG(LogEnemyGroup, Log, TEXT("被弾通知を受けました。Group=%s, Attacker=%s"),
+		*GetName(), *GetNameSafe(Attacker));
+	SetGroupState(EEnemyGroupState::Engaged);
+}
+
+void AEnemyGroup::SetGroupState(const EEnemyGroupState NewState)
+{
+	if (GroupState == NewState)
+	{
+		return;
+	}
+
+	const EEnemyGroupState OldState = GroupState;
+	GroupState = NewState;
+
+	UE_LOG(LogEnemyGroup, Log, TEXT("グループ状態が遷移しました。Group=%s, %s → %s"),
+		*GetName(), *UEnum::GetValueAsString(OldState), *UEnum::GetValueAsString(NewState));
+
+	OnGroupStateChanged.Broadcast(this, OldState, NewState);
+}
+
+const APawn* AEnemyGroup::GetSensedPlayerPawn() const
+{
+	return UGameplayStatics::GetPlayerPawn(this, 0);
+}
+
+bool AEnemyGroup::AreAllMembersNearAnchor() const
+{
+	const FVector Anchor = GetActorLocation();
+	for (const AEnemyCharacter* Member : GetAliveMembers())
+	{
+		if (FVector::Dist(Anchor, Member->GetActorLocation()) > ReturnHomeRadius)
+		{
+			return false;
+		}
+	}
+	return true;
 }
