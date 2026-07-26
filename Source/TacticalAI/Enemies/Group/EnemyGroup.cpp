@@ -2,6 +2,8 @@
 #include "Characters/EnemyCharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
+#include "AI/Targeting/Targetable.h"
+#include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEnemyGroup, Log, All);
@@ -145,7 +147,14 @@ void AEnemyGroup::TickSensing(float DeltaTime)
 	}();
 	const float DistToAnchor = FVector::Dist(Player->GetActorLocation(), Anchor);
 
-	// [2] 상태별 전이 판정. Exit < Enter 설정 실수는 Enter 거리로 방어.
+	// [2] Engaged 동안 알려진 적 갱신.
+	// Engaged中は既知敵を更新（感知周期を再利用）。
+	if (GroupState == EEnemyGroupState::Engaged)
+	{
+		RefreshKnownHostiles();
+	}
+	
+	// [3] 상태별 전이 판정. Exit < Enter 설정 실수는 Enter 거리로 방어.
 	// 状態別の遷移判定。Exit<Enterの設定ミスはEnter距離で防御。
 	const float SafeAlertExit = FMath::Max(AlertExitDistance, AlertEnterDistance);
 
@@ -195,6 +204,17 @@ void AEnemyGroup::SetGroupState(const EEnemyGroupState NewState)
 	const EEnemyGroupState OldState = GroupState;
 	GroupState = NewState;
 
+	// Engaged 이탈 = 교전 지식 소멸. 진입 시엔 즉시 1회 갱신.
+	// Engaged離脱＝交戦知識の消滅。進入時は即時1回更新。
+	if (NewState == EEnemyGroupState::Engaged)
+	{
+		RefreshKnownHostiles();
+	}
+	else
+	{
+		KnownHostiles.Reset();
+	}
+	
 	UE_LOG(LogEnemyGroup, Log, TEXT("グループ状態が遷移しました。Group=%s, %s → %s"),
 		*GetName(), *UEnum::GetValueAsString(OldState), *UEnum::GetValueAsString(NewState));
 
@@ -217,4 +237,41 @@ bool AEnemyGroup::AreAllMembersNearAnchor() const
 		}
 	}
 	return true;
+}
+
+void AEnemyGroup::RefreshKnownHostiles()
+{
+	KnownHostiles.Reset();
+
+	// ⚠ 2진영 가정: "ITargetable 구현 폰 중 우리 편(적 캐릭터)이 아니면 적대".
+	//   제3 진영이 생기면 이 필터만 진영 판정으로 교체.
+	// ⚠ 2陣営前提：第3陣営導入時はこのフィルタのみ差し替え。
+	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
+	{
+		APawn* Pawn = *It;
+		if (Pawn->Implements<UTargetable>() && !Pawn->IsA<AEnemyCharacter>())
+		{
+			KnownHostiles.Add(Pawn);
+		}
+	}
+}
+
+TArray<AActor*> AEnemyGroup::GetKnownHostiles() const
+{
+	// Engaged 게이트 + 유효성 필터. 자격(IsTargetable) 필터는 셀렉터 베이스의 몫.
+	// Engagedゲート＋有効性フィルタ。ターゲット可能資格フィルタ(IsTargetable)はセレクタ基底の責務。
+	TArray<AActor*> Result;
+	if (GroupState != EEnemyGroupState::Engaged)
+	{
+		return Result;
+	}
+	Result.Reserve(KnownHostiles.Num());
+	for (const TWeakObjectPtr<AActor>& Weak : KnownHostiles)
+	{
+		if (AActor* Hostile = Weak.Get())
+		{
+			Result.Add(Hostile);
+		}
+	}
+	return Result;
 }

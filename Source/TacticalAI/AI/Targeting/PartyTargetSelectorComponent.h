@@ -5,7 +5,7 @@
 #include "PartyTargetSelectorComponent.generated.h"
 
 // =========================================================================
-// パーティ側セレクタ。
+// パーティ側ターゲットセレクタ。
 // =========================================================================
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UPartyTargetSelectorComponent : public UTargetSelectorComponent

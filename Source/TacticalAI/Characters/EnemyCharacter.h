@@ -7,6 +7,8 @@
 
 class UEnemyFormationStrategy;
 class AEnemyGroup;
+class UEnemyTargetSelectorComponent;
+class UTargetSelectorComponent;
 
 // =========================================================================
 // 적 캐릭터 베이스.
@@ -65,6 +67,16 @@ public:
 		return FleeHealthRatio;
 	}
 
+	// 게터는 베이스 타입 — 소비자(동료 컨텍스트 수집·추후 행동)가 진영 자식을 모르게.
+	// getterは基底型 — 消費側が陣営子クラスを知らないように。
+	UTargetSelectorComponent* GetTargetSelector() const;
+
+protected:
+	/** 타겟 선정 컴포넌트. 정책 조합·가중치는 적 BP에서 편집. */
+	/** ターゲット選定コンポーネント。ポリシー構成は敵BPで編集。 */
+	UPROPERTY(VisibleAnywhere, Category = "Targeting")
+	TObjectPtr<UEnemyTargetSelectorComponent> TargetSelector;
+	
 private:
 	
 	TWeakObjectPtr<AEnemyGroup> OwningGroup;

@@ -93,6 +93,14 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Enemy Group")
 	FOnEnemyGroupStateChanged OnGroupStateChanged;
 	
+	// =========================================================================
+	// 알려진 적. Engaged 동안만 유효. "교전 시작 = 상대 전원 인지" 규칙의 구현.
+	// 점진 발견이 아니라 교전 진입 시 전량 파악. 스캔은 그룹이 1회 (셀렉터별 중복 금지).
+	// Engaged中のみ有効。「交戦開始＝相手全員を知覚」ルールの実装。スキャンはグループが1回。
+	// =========================================================================
+	UFUNCTION(BlueprintCallable, Category = "Enemy Group")
+	TArray<AActor*> GetKnownHostiles() const;
+	
 protected:
 	virtual void BeginPlay() override;
 
@@ -109,6 +117,8 @@ private:
 	void SetGroupState(EEnemyGroupState NewState);
 	const APawn* GetSensedPlayerPawn() const;
 	bool AreAllMembersNearAnchor() const;
+	
+	void RefreshKnownHostiles();
 	
 private:
 	// =========================================================================
@@ -167,4 +177,8 @@ private:
 	// 다음 감지까지 남은 시간. 첫 감지를 랜덤 위상으로 시작해 그룹 간 동기화 방지.
 	// 次感知までの残時間。初回をランダム位相にしグループ間の同期を防ぐ。
 	float TimeUntilNextSense = 0.f;
+	
+	// 알려진 적 캐시. 약참조, 조회 시 유효성 필터. Engaged 이탈 시 비움.
+	// 既知敵キャッシュ。非所有 — 弱参照。Engaged離脱時にクリア。
+	TArray<TWeakObjectPtr<AActor>> KnownHostiles;
 };

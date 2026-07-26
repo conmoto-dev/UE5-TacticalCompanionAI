@@ -1,7 +1,6 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #include "Characters/EnemyCharacter.h"
 #include "Enemies/Group/EnemyGroup.h"
+#include "AI/Targeting/EnemyTargetSelectorComponent.h"
 
 AEnemyCharacter::AEnemyCharacter()
 {
@@ -11,14 +10,15 @@ AEnemyCharacter::AEnemyCharacter()
 	// 적 전용 AIController·회피(crowd) 연결은 그룹 배치 단계에서. 지금은 기본 컨트롤러로 충분.
 	// スポーン後にAIが憑依。スロット移動にコントローラーが要る。敵専用化は配置段階で。
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+	
+	TargetSelector = CreateDefaultSubobject<UEnemyTargetSelectorComponent>(TEXT("TargetSelector"));
 }
 
 void AEnemyCharacter::SetEnemyGroup(AEnemyGroup* InGroup)
-{
-	OwningGroup = InGroup;
-}
+{ OwningGroup = InGroup; }
 
 AEnemyGroup* AEnemyCharacter::GetEnemyGroup() const
-{
-	return OwningGroup.Get();
-}
+{ return OwningGroup.Get(); }
+
+UTargetSelectorComponent* AEnemyCharacter::GetTargetSelector() const 
+{ return TargetSelector; }
