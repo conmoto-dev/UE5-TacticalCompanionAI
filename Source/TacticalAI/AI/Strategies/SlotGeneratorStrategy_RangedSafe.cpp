@@ -84,6 +84,38 @@ FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& C
 	return Best.Location;
 }
 
+bool USlotGeneratorStrategy_RangedSafe::ShouldReposition(const FSlotGenContext& Context,
+	const FVector& CommittedSlot, float TimeSinceCommit) const
+{
+	// [1] 공통 하드 판정(사거리 이탈)은 베이스에 위임.
+	if (Super::ShouldReposition(Context, CommittedSlot, TimeSinceCommit)) return true;
+
+	// [2] 위협 회피(소프트). 검증 대상은 커밋 슬롯(목적지)이지 캐릭터 live 위치가 아님 —
+	//     이동 중 노이즈 차단. 가장 가까운 적까지의 거리만 본다.
+	// 検証対象はコミットスロット（目的地）。移動中ノイズ遮断。最近接敵のみ参照。
+	float NearestSq = TNumericLimits<float>::Max();
+	for (const TWeakObjectPtr<const AActor>& EnemyPtr : Context.PerceivedEnemies)
+	{
+		if (const AActor* Enemy = EnemyPtr.Get())
+		{
+			NearestSq = FMath::Min(NearestSq, FVector::DistSquared2D(CommittedSlot, Enemy->GetActorLocation()));
+		}
+	}
+	if (NearestSq == TNumericLimits<float>::Max()) return false; // 적 없음.
+
+	const float Nearest = FMath::Sqrt(NearestSq);
+
+	// [3] reluctance 무시하고 즉시 회피.
+	// 緊急：目前ならreluctance無視で即時回避。
+	if (Nearest < EmergencyFleeRadius) return true;
+
+	// [4] reluctance 게이트: 막 배치한 직후엔 회피를 억제하고, 시간이 지날수록 회피 반경을 0→full로 연다.
+	//     "이동-한대-쫓겨서 또 이동"의 무한 트위치를 "회피 주기당 한 번"으로 줄이는 핵심.
+	// reluctanceゲート：配置直後は回避抑制、時間で回避半径を0→fullに開く（無限カイティング防止）。
+	const float SettleFactor = FMath::Clamp(TimeSinceCommit / FMath::Max(ThreatReluctanceTime, KINDA_SMALL_NUMBER), 0.f, 1.f);
+	return Nearest < ThreatOnTopRadius * SettleFactor;
+}
+
 USlotGeneratorStrategy_RangedSafe::FCandidateScore USlotGeneratorStrategy_RangedSafe::ScoreCandidate(
 	const FSlotGenContext& Context,
 	const FVector& Candidate,

@@ -106,26 +106,7 @@ protected:
 	// 디자이너 기본 반경. 최종 반경 = 이 값 + 타겟의 EncircleRadius + 역할별 RadiusOffset.
 	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "0.0"))
 	float DesignerBaseRadius = 200.f;
-
-	// ───── 재배치 트리거 (개별형 전용) ─────
-
-	// 충분히 자리 잡았을 때의 위협 회피 반경. 이 안에 적이 들어오면 회피 재배치.
-	// 단, 막 배치한 직후엔 아래 ReluctanceTime 동안 이 반경이 0→full로 서서히 켜진다.
-	// 落ち着いた後の脅威回避半径。配置直後はReluctanceTimeかけて0→fullに立ち上がる。
-	UPROPERTY(EditAnywhere, Category = "Battle|Reposition", meta = (ClampMin = "0.0"))
-	float ThreatOnTopRadius = 1000.f;
-
-	// 비상 회피 반경. 이 안(코앞)에 적이 붙으면 reluctance 무시하고 즉시 회피.
-	// 緊急回避半径。この距離(目前)はreluctance無視で即時回避。
-	UPROPERTY(EditAnywhere, Category = "Battle|Reposition", meta = (ClampMin = "0.0"))
-	float EmergencyFleeRadius = 50.f;
-
-	// 배치 후 이 시간이 지나야 위협 회피가 완전히 켜진다. 짧을수록 잘 도망, 길수록 잘 버팀.
-	// 매직넘버 "n초 후 재슬롯"이 아니라, 이 시간에 걸쳐 회피 발동을 연속적으로 푸는 가중치.
-	// 配置後この時間で脅威回避が全開。離散的な「n秒後」でなく連続的な立ち上がり。
-	UPROPERTY(EditAnywhere, Category = "Battle|Reposition", meta = (ClampMin = "0.0", Units = "s"))
-	float ThreatReluctanceTime = 15.f;
-
+	
 	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
 	TWeakObjectPtr<AActor> CurrentTarget;
 
@@ -140,21 +121,12 @@ private:
 	const FRoleSlotConfig* FindConfigForRole(const FGameplayTag& Role) const;
 
 	// =========================================================================
-	// 재배치 결정 게이트 (개별형 전용 — 집합형 Arc는 기존 경로 유지).
+	// 재배치 결정 게이트.
 	// "지금 자리를 버리고 옮길 이유가 있나"만 판단. 어디로 갈지는 Strategy 몫.
 	// ⚠ 플레이어 위치/방향은 여기 트리거에 절대 넣지 않는다 — 넣으면 오빗 트위치 부활.
 	//   플레이어는 목적지 편향(Strategy)에만 들어간다.
 	// =========================================================================
 	// 再配置決定ゲート（個別型専用）。プレイヤー位置はトリガーに入れない（オービット復活）。
-
-	// 커밋 슬롯이 사거리를 벗어났나 (하드 — reluctance 무시). 못 때리는 자리는 쓸모없음.
-	bool IsSlotOutOfRange(const FCommitSnapshot& Snapshot, const AActor* Target, float AttackRange) const;
-
-	// 위협 회피 판정 (소프트 — reluctance 게이트 + 비상 바이패스).
-	// 검증은 커밋 슬롯 기준이지 캐릭터 live 위치가 아님 — 이동 중 노이즈 차단.
-	// 検証はlive位置でなくCommittedSlot基準。
-	bool ShouldFleeThreat(const FCommitSnapshot& Snapshot,
-		const TArray<TWeakObjectPtr<const AActor>>& PerceivedEnemies, float TimeSinceCommit) const;
 
 	// 재배치 실행: 현재 월드로 슬롯 생성 → 환경보정 → 커밋 갱신 → locomotion에 전달.
 	void CommitReposition(APartyCharacter* Member, const FSlotGenContext& Context,

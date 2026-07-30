@@ -35,7 +35,31 @@ public:
 	{
 		return ESlotAssignmentPolicy::MemberSpecific;
 	}
+	
+	virtual bool ShouldReposition(const FSlotGenContext& Context,
+		const FVector& CommittedSlot, float TimeSinceCommit) const override;
 
+	// ───── 재배치 트리거 (커밋 슬롯 유효성 판정) ─────
+
+	// 충분히 자리 잡았을 때의 위협 회피 반경. 이 안에 적이 들어오면 회피 재배치.
+	// 배치한 직후엔 아래 ReluctanceTime 동안 이 반경이 0→full로 서서히 켜진다.
+	// ⚠ 튜닝 불변식: 이 값 < AttackRange×MinRangeRatio면 안 됨… 이 아니라,
+	//   이 값이 선호 교전 거리보다 크면 가만히 선 타겟에게서 영원히 도망친다 (ADR-0003 §6).
+	// 落ち着いた後の脅威回避半径。配置直後はReluctanceTimeかけて0→fullに立ち上がる。
+	UPROPERTY(EditAnywhere, Category = "RangedSafe|Reposition", meta = (ClampMin = "0.0"))
+	float ThreatOnTopRadius = 1000.f;
+
+	// 비상 회피 반경. 이 안에 적이 붙으면 reluctance 무시하고 즉시 회피.
+	// 緊急回避半径。この距離はreluctance無視で即時回避。
+	UPROPERTY(EditAnywhere, Category = "RangedSafe|Reposition", meta = (ClampMin = "0.0"))
+	float EmergencyFleeRadius = 50.f;
+
+	// 배치 후 이 시간이 지나야 위협 회피가 완전히 켜진다. 짧을수록 잘 도망, 길수록 잘 버팀.
+	// 매직넘버 "n초 후 재슬롯"이 아니라, 이 시간에 걸쳐 회피 발동을 연속적으로 푸는 가중치.
+	// 配置後この時間で脅威回避が全開。離散的な「n秒後」でなく連続的な立ち上がり。
+	UPROPERTY(EditAnywhere, Category = "RangedSafe|Reposition", meta = (ClampMin = "0.0", Units = "s"))
+	float ThreatReluctanceTime = 15.f;
+	
 	// ───── 후보 생성 (타겟 둘레 360도 링) ─────
 
 	// 한 링을 몇 등분해 후보를 깔지. 360도를 이 수로 나눈 각도마다 한 점.

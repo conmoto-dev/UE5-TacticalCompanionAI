@@ -204,8 +204,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 			const bool bNeedsReposition =
 				   !Snapshot.bHasCommitted
-				|| IsSlotOutOfRange(Snapshot, Target, Member->GetAttackRange())
-				|| ShouldFleeThreat(Snapshot, PerceivedEnemies, TimeSinceCommit);
+				|| Config->SlotGenerator->ShouldReposition(SlotGenContext, Snapshot.CommittedSlot, TimeSinceCommit);
 
 			if (bNeedsReposition)
 			{
@@ -238,50 +237,8 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 }
 
 // =========================================================================
-// 재배치 게이트 구현 (개별형 전용)
+// 재배치 게이트
 // =========================================================================
-
-bool UFormationBattleComponent::IsSlotOutOfRange(
-	const FCommitSnapshot& Snapshot, const AActor* Target, float AttackRange) const
-{
-	// 하드 트리거: 커밋 슬롯에서 타겟을 못 때리면 그 자리는 쓸모없음 → reluctance 무시하고 재배치.
-	// ハード：コミットスロットからターゲットを撃てないなら無価値 → reluctance無視で再配置。
-	if (!Target) return false; // 타겟 없으면 GetFormationAnchor 단계에서 이미 정지.
-	return FVector::Dist2D(Snapshot.CommittedSlot, Target->GetActorLocation()) > AttackRange;
-}
-
-bool UFormationBattleComponent::ShouldFleeThreat(
-	const FCommitSnapshot& Snapshot,
-	const TArray<TWeakObjectPtr<const AActor>>& PerceivedEnemies, float TimeSinceCommit) const
-{
-	// 검증 대상은 커밋 슬롯(목적지)이지 캐릭터 live 위치가 아님 — 이동 중 노이즈 차단.
-	// 가장 가까운 적까지의 거리만 본다("지금 제일 붙은 놈").
-	float NearestSq = TNumericLimits<float>::Max();
-	for (const TWeakObjectPtr<const AActor>& EnemyPtr : PerceivedEnemies)
-	{
-		if (const AActor* Enemy = EnemyPtr.Get())
-		{
-			NearestSq = FMath::Min(NearestSq, FVector::DistSquared2D(Snapshot.CommittedSlot, Enemy->GetActorLocation()));
-		}
-	}
-	if (NearestSq == TNumericLimits<float>::Max()) return false; // 적 없음.
-
-	const float Nearest = FMath::Sqrt(NearestSq);
-
-	// [1] 비상: 코앞이면 reluctance 무시하고 즉시 회피.
-	// 緊急：目前ならreluctance無視で即時回避。
-	if (Nearest < EmergencyFleeRadius) return true;
-
-	// [2] reluctance 게이트: 막 배치한 직후엔 회피를 억제하고, 시간이 지날수록 회피 반경을 0→full로 연다.
-	//     이게 "이동-한대-쫓겨서 또 이동"의 무한 트위치를 "회피 주기당 한 번"으로 줄이는 핵심.
-	//     (끝까지 쫓기면 어떻게 = 상위 행동 레이어/StateTree 몫. 여기선 댐핑만.)
-	// reluctanceゲート：配置直後は回避抑制、時間で回避半径を0→fullに開く（無限カイティング防止）。
-	const float SettleFactor = FMath::Clamp(TimeSinceCommit / FMath::Max(ThreatReluctanceTime, KINDA_SMALL_NUMBER), 0.f, 1.f);
-	const float EffectiveFleeRadius = ThreatOnTopRadius * SettleFactor;
-
-	return Nearest < EffectiveFleeRadius;
-}
-
 void UFormationBattleComponent::CommitReposition(
 	APartyCharacter* Member, const FSlotGenContext& Context,
 	const FRoleSlotConfig& Config, FCommitSnapshot& OutSnapshot)
@@ -320,10 +277,9 @@ TArray<FVector> UFormationBattleComponent::GatherOccupancyForMemberSpecific(
 	return Out;
 }
 
-// =========================================================================
+// ===========
 // 헬퍼
-// =========================================================================
-
+// ===========
 const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGameplayTag& Role) const
 {
 	// 설정 엔트리는 역할당 2~4개 수준 — 선형 탐색으로 충분.

@@ -126,4 +126,21 @@ public:
 	{
 		return ESlotAssignmentPolicy::GroupHungarian;
 	}
+	
+	/**
+	 * 커밋된 슬롯이 아직 유효한지 판정. true = 재배치 필요.
+	 * 유효성 기준은 슬롯을 만든 Strategy가.
+	 * 게이트 루프·커밋 관리·첫 커밋 판정은 컴포넌트 소관, 여기선 답만 한다.
+	 * 기본 구현 = 사거리 이탈(하드): 커밋 슬롯에서 타겟을 못 때리면 무가치.
+	 *
+	 * コミット済みスロットの有効性判定。true＝再配置が必要。
+	 * 無効条件は生成したStrategyが判定も持つ。
+	 * デフォルト実装＝射程逸脱（ハード）。
+	 *
+	 * @param Context         생성 때와 동일한 입력 컨텍스트 (타겟·사거리·적 분포)
+	 * @param CommittedSlot   현재 커밋된 슬롯 (검증 대상은 이 목적지 — live 위치 아님)
+	 * @param TimeSinceCommit 커밋 후 경과 시간(초). reluctance류 판정의 입력.
+	 */
+	virtual bool ShouldReposition(const FSlotGenContext& Context,
+		const FVector& CommittedSlot, float TimeSinceCommit) const;
 };
