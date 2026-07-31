@@ -102,10 +102,6 @@ protected:
 	// 役割別スロット生成設定。未設定の役割はMeleeへフォールバック。
 	UPROPERTY(EditAnywhere, Category = "Battle")
 	TArray<FRoleSlotConfig> RoleSlotConfigs;
-
-	// 디자이너 기본 반경. 최종 반경 = 이 값 + 타겟의 EncircleRadius + 역할별 RadiusOffset.
-	UPROPERTY(EditAnywhere, Category = "Battle", meta = (ClampMin = "0.0"))
-	float DesignerBaseRadius = 200.f;
 	
 	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
 	TWeakObjectPtr<AActor> CurrentTarget;

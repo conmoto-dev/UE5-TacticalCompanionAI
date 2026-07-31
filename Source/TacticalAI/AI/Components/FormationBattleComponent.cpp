@@ -314,5 +314,5 @@ float UFormationBattleComponent::ComputeBaseRadius() const
 		}
 	}
 
-	return DesignerBaseRadius + TargetRadius;
+	return TargetRadius;
 }

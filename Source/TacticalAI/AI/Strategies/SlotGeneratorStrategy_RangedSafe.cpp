@@ -13,8 +13,8 @@ FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& C
 	//     어느 쪽이 좋은지는 후보를 안 가리고, 전적으로 [3] 점수가 결정한다.
 	//     축이 없으므로 플레이어 궤도로 후보장이 회전하던 떨림이 구조적으로 없다.
 	// 候補は方向を選ばず360度に撒く。良し悪しは全てスコアが決める（軸が無い=回転しない）。
-	const float InnerRange = Context.AttackRange * PreferredRangeRatio;
-	const float OuterRange = Context.AttackRange * OuterRingRatio;
+	const float InnerRange = Context.BaseRadius + Context.AttackRange * PreferredRangeRatio;
+	const float OuterRange = Context.BaseRadius + Context.AttackRange * OuterRingRatio;
 	const bool  bUseOuter  = OuterRingRatio > KINDA_SMALL_NUMBER && OuterRange > InnerRange + 1.f;
 
 	const int32 Samples = FMath::Max(RingSampleCount, 3);
@@ -124,9 +124,11 @@ USlotGeneratorStrategy_RangedSafe::FCandidateScore USlotGeneratorStrategy_Ranged
 	FCandidateScore Result;
 	Result.Location = Candidate;
 
-	// [1] 사거리 하드 필터 + 보상축. Band 밖이면 탈락.
-	const float DistToTarget = FVector::Dist2D(Candidate, TargetLoc);
-	const float RangeScore = ComputeRangeScore(DistToTarget, Context.AttackRange);
+	// [1] 사거리 하드 필터 + 보상축. 거리는 표면 기준 — 몸통 안(음수→0)은 MinRange 미달로 자연 탈락.
+	// 距離は表面基準。体内（負→0クランプ）はMinRange未満で自然に脱落。
+	const float SurfaceDist = FMath::Max(
+		FVector::Dist2D(Candidate, TargetLoc) - Context.BaseRadius, 0.f);
+	const float RangeScore = ComputeRangeScore(SurfaceDist, Context.AttackRange);
 	if (RangeScore <= 0.f)
 	{
 		Result.bRejected = true;
