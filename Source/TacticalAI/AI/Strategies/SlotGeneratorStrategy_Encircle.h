@@ -27,13 +27,6 @@ class TACTICALAI_API USlotGeneratorStrategy_Encircle : public USlotGeneratorStra
 public:
 	virtual FVector GenerateSlot(const FSlotGenContext& Context) const override;
 
-	// 멤버 1명 기준으로 슬롯을 고르므로 멤버별 배정.
-	// メンバー基準で生成するため個別割当。
-	virtual ESlotAssignmentPolicy GetAssignmentPolicy() const override
-	{
-		return ESlotAssignmentPolicy::MemberSpecific;
-	}
-
 protected:
 	// 서는 거리 = 자기 AttackRange × 이 비율.
 	// 立ち位置＝自分のAttackRange×この比率。1.0未満の余裕が追撃ヒステリシスになる。
@@ -43,7 +36,7 @@ protected:
 	// 링 위 동료 점유와 지킬 최소 각도 간격(도). 클수록 넓게 벌어져 포위가 빨리 펼쳐짐.
 	// リング上の味方占有と保つ最小角度間隔（度）。大きいほど広く散開。
 	UPROPERTY(EditAnywhere, Category = "Encircle", meta = (ClampMin = "0.0", ClampMax = "180.0"))
-	float MinSeparationDeg = 45.f;
+	float MinSeparationDeg = 90.f;
 
 	// 점유 슬롯을 "이 타겟의 링 위"로 인정할 반경 오차(cm).
 	// 링 반경 ± 이 값 안의 점유만 각도 경쟁에 참여 (다른 타겟·원거리 커밋은 자연 제외).

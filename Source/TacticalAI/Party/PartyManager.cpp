@@ -57,7 +57,6 @@ void APartyManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	TickModeDecision();
-	TickTargetBridge();
 }
 
 APartyCharacter* APartyManager::GetLeader() const
@@ -146,18 +145,4 @@ void APartyManager::TickModeDecision()
 		SetFormationMode(EPartyFormationMode::Follow);
 	}
 	// 사이 구간: 아무것도 안 함 → 현재 모드 유지.
-}
-
-void APartyManager::TickTargetBridge()
-{
-	// [임시 브리지 — Formation의 개별 타겟 소비(타겟×역할 그룹핑) 도입 시 제거 예정]
-	// Battle Formation이 아직 파티 단일 타겟만 받으므로, 리더의 선정 결과를 대표로 공급.
-	// [暫定ブリッジ] Battle隊形は単一ターゲットのみ受けるため、リーダーの選定結果を代表供給。
-	if (CurrentFormationMode != EPartyFormationMode::Battle) return;
-
-	const APartyCharacter* Leader = GetLeader();
-	if (const UTargetSelectorComponent* Selector = Leader ? Leader->GetTargetSelector() : nullptr)
-	{
-		BattleComponent->SetCombatTarget(Selector->GetCurrentTarget());
-	}
 }

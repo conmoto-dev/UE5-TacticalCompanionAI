@@ -84,8 +84,6 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category="Formation")
 	TObjectPtr<UFormationBattleComponent> BattleComponent;
 	
-	void TickTargetBridge();
-	
 	/** Detect Battle State by Leader - Nearest Enemy Distance. */
 
 	/** 적 그룹 인지 시스템. GetPerceivedEnemies의 실제 공급자. */

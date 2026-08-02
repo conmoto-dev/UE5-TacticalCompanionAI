@@ -28,13 +28,6 @@ class TACTICALAI_API USlotGeneratorStrategy_RangedSafe : public USlotGeneratorSt
 
 public:
 	virtual FVector GenerateSlot(const FSlotGenContext& Context) const override;
-
-	// 멤버 1명 기준으로 슬롯을 고르므로 멤버별 배정.
-	// メンバー基準で生成するため個別割当。
-	virtual ESlotAssignmentPolicy GetAssignmentPolicy() const override
-	{
-		return ESlotAssignmentPolicy::MemberSpecific;
-	}
 	
 	virtual bool ShouldReposition(const FSlotGenContext& Context,
 		const FVector& CommittedSlot, float TimeSinceCommit) const override;

@@ -6,13 +6,19 @@
 FVector USlotGeneratorStrategy_RangedSafe::GenerateSlot(const FSlotGenContext& Context) const
 {
 	// [1] 사거리 평가의 중심. RangedSafe는 anchor가 아니라 타겟 기준.
+	// 評価の中心＝自分のターゲット。
 	const AActor* Target = Context.PrimaryTarget.Get();
-	const FVector TargetLoc = Target ? Target->GetActorLocation() : Context.Anchor.GetLocation();
+	if (!Target)
+	{
+		return Context.RequesterLocation;
+	}
+	const FVector TargetLoc = Target->GetActorLocation();
 
 	// [2] 후보 생성 — 타겟 둘레 360도 링. 방향축 없음.
 	//     어느 쪽이 좋은지는 후보를 안 가리고, 전적으로 [3] 점수가 결정한다.
 	//     축이 없으므로 플레이어 궤도로 후보장이 회전하던 떨림이 구조적으로 없다.
-	// 候補は方向を選ばず360度に撒く。良し悪しは全てスコアが決める（軸が無い=回転しない）。
+	//     링 반경 = 표면 이격(BaseRadius) + 사거리 × 비율
+	// 候補は方向を選ばず360度に撒く。半径＝表面間隔＋射程×比率（採点と同座標系）。
 	const float InnerRange = Context.BaseRadius + Context.AttackRange * PreferredRangeRatio;
 	const float OuterRange = Context.BaseRadius + Context.AttackRange * OuterRingRatio;
 	const bool  bUseOuter  = OuterRingRatio > KINDA_SMALL_NUMBER && OuterRange > InnerRange + 1.f;

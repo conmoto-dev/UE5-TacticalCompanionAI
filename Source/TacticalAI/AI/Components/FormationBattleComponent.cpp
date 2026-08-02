@@ -4,6 +4,7 @@
 #include "DrawDebugHelpers.h"
 #include "NavigationSystem.h"
 #include "AI/CombatRoleTags.h"
+#include "AI/Targeting/TargetSelectorComponent.h"
 #include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
 
@@ -20,18 +21,11 @@ UFormationBattleComponent::UFormationBattleComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 }
 
-void UFormationBattleComponent::BeginPlay()
-{
-	Super::BeginPlay();
-	CurrentTarget = DebugTargetActor;
-}
-
 void UFormationBattleComponent::Activate(bool bReset)
 {
 	Super::Activate(bReset);
-	// 전투 진입 시: 집합형은 헝가리안 재배정 예약, 개별형은 커밋 비움 → 첫 평가에서 전원 초기 배치.
-	// 戦闘進入時：集合型は再割当予約、個別型はコミットを空にして全員初期配置。
-	bNeedsReassignment = true;
+	// 전투 진입 시 커밋 비움 → 첫 평가에서 전원 초기 배치.
+	// 戦闘進入時：コミットを空にして全員初期配置。
 	CommitSnapshots.Reset();
 }
 
@@ -40,16 +34,12 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	if (!IsActive()) return;
-	
-	// [1] anchor 획득. 타겟 소멸 시 파이프라인 정지.
-	const TOptional<FTransform> AnchorOpt = GetFormationAnchor();
-	if (!AnchorOpt.IsSet()) return;
 
-	const FTransform& Anchor = AnchorOpt.GetValue();
-	const FVector AnchorOrigin = Anchor.GetLocation();
+	TArray<APartyCharacter*> Followers = GetPartyFollowers();
+	if (Followers.Num() == 0) return;
 
-	// 리더 위치 1회 캐시. 모든 그룹·멤버가 공유하는 전선 기준(목적지 편향용).
-	// リーダー位置はグループ・メンバー共通。ループ外で一度だけ。
+	// [1] 리더 위치 1회 캐시. 전 멤버 공유하는 목적지 편향 입력 — 루프 밖에서 한 번만.
+	// リーダー位置はメンバー共通。ループ外で一度だけ。
 	FVector LeaderLocation = FVector::ZeroVector;
 	if (const APartyManager* Manager = GetOwningPartyManager())
 	{
@@ -59,10 +49,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		}
 	}
 
-	TArray<APartyCharacter*> Followers = GetPartyFollowers();
-	if (Followers.Num() == 0) return;
-
-	// [2] 인지한 적 목록. Manager가 단일 소스 — 그룹 무관이라 루프 밖에서 1회.
+	// [2] 인지한 적 목록. Manager가 단일 소스 — 멤버 무관이라 루프 밖에서 1회.
 	// 知覚した敵リストはManagerが単一ソース。ループ外で一度だけ。
 	TArray<TWeakObjectPtr<const AActor>> PerceivedEnemies;
 	if (const APartyManager* Manager = GetOwningPartyManager())
@@ -73,167 +60,122 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 		}
 	}
 
-	// [3] 역할 분류. 태그 미지정·설정 미등록은 Melee로 폴백 (경고는 재배정 시점에만).
-	TMap<FGameplayTag, TArray<APartyCharacter*>> GroupedFollowers;
-	for (APartyCharacter* Follower : Followers)
+	// [3] 같은 틱 첫 커밋 순서: PlacementPriority 낮은 순 (StableSort — 동순위 순서 틱 간 고정).
+	//     전투 진입 첫 틱에 전원 동시 커밋할 때 뒤 멤버가 앞 멤버의 커밋을 점유로 보게 하는 장치.
+	//     운용 중엔 타겟 재평가의 어긋난 박동 덕에 동시 커밋이 드물어, 이 순서는 진입 순간에만 의미.
+	// 同ティック初回コミットの順序決定。運用中はずれた鼓動により同時コミットは稀。
+	Followers.StableSort([this](const APartyCharacter& A, const APartyCharacter& B)
 	{
-		FGameplayTag Role = Follower->GetCombatRole();
+		auto GetPriority = [this](const APartyCharacter& Character) -> int32
+		{
+			FGameplayTag Role = Character.GetCombatRole();
+			if (!Role.IsValid() || FindConfigForRole(Role) == nullptr)
+			{
+				Role = CombatRoleTags::Melee;
+			}
+			const FRoleSlotConfig* Config = FindConfigForRole(Role);
+			return Config ? Config->PlacementPriority : 0;
+		};
+		return GetPriority(A) < GetPriority(B);
+	});
+
+	const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+
+	// [4] 멤버별 게이트 파이프라인. 그룹 없음 — 전 Strategy 개별형(1인→1슬롯 항등 배정).
+	//     슬롯이 인원 수 N에 종속되지 않으므로, 한 명의 타겟 변동이 남은 멤버로 전파되지 않는다.
+	// メンバー別ゲート。グループ無し。1人のターゲット変動が他へ伝播しない。
+	int32 MemberIndex = 0;
+	for (APartyCharacter* Member : Followers)
+	{
+		if (!Member) continue;
+		const int32 DebugIndex = MemberIndex++;
+
+		// [4-1] 역할 → 설정. 태그 미지정·미등록은 Melee 폴백.
+		FGameplayTag Role = Member->GetCombatRole();
 		if (!Role.IsValid() || FindConfigForRole(Role) == nullptr)
 		{
 			Role = CombatRoleTags::Melee;
 		}
-		GroupedFollowers.FindOrAdd(Role).Add(Follower);
-	}
-
-	// [3.5] 그룹 순회 순서를 PlacementPriority로 정렬 (TMap 순회는 순서 불확정).
-	//       낮은 priority가 먼저 자리를 잡는다(이후 점유 누적의 기준).
-	TArray<FGameplayTag> OrderedRoles;
-	GroupedFollowers.GetKeys(OrderedRoles);
-	OrderedRoles.Sort([this](const FGameplayTag& A, const FGameplayTag& B)
-	{
-		const FRoleSlotConfig* ConfigA = FindConfigForRole(A);
-		const FRoleSlotConfig* ConfigB = FindConfigForRole(B);
-		const int32 PriorityA = ConfigA ? ConfigA->PlacementPriority : 0;
-		const int32 PriorityB = ConfigB ? ConfigB->PlacementPriority : 0;
-		return PriorityA < PriorityB;
-	});
-
-	// [3.6] 집합형(Arc) 점유 누적 버퍼. 그룹 루프 밖에 선언 —
-	//       먼저 배치된 집합형 그룹의 슬롯이 다음 그룹(개별형 포함) 평가의 입력이 된다.
-	//       개별형끼리의 점유는 이 버퍼가 아니라 CommitSnapshots에서 모은다(아래 Gather…).
-	TArray<FVector> OccupiedSlots;
-
-	const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-
-	// [4] 그룹별 파이프라인. 배정 정책으로 갈린다.
-	int32 GroupIndex = 0;
-	for (const FGameplayTag& Role : OrderedRoles)
-	{
-		TArray<APartyCharacter*>& GroupMembers = GroupedFollowers[Role];
-
 		const FRoleSlotConfig* Config = FindConfigForRole(Role);
-		if (!Config || !Config->SlotGenerator)
+		if (!Config || !Config->SlotGenerator) continue;
+
+		// [4-2] 개별 타겟 = 멤버 셀렉터의 커밋 결과. 없으면 skip(배치 갱신 정지).
+		//       무타겟 시의 행동(복귀·대기)은 행동 레이어 몫 — 여기선 아무것도 안 민다.
+		// 個別ターゲット＝セレクタのコミット結果。無ければskip（行動は行動レイヤーの責務）。
+		const AActor* MemberTarget = nullptr;
+		if (const UTargetSelectorComponent* Selector = Member->GetTargetSelector())
 		{
-			++GroupIndex;
-			continue;
+			MemberTarget = Selector->GetCurrentTarget();
 		}
+		if (!MemberTarget) continue;
 
-		const float GroupBaseRadius = ComputeBaseRadius() + Config->RadiusOffset;
-		const bool bMemberSpecific =
-			Config->SlotGenerator->GetAssignmentPolicy() == ESlotAssignmentPolicy::MemberSpecific;
+		FCommitSnapshot& Snapshot = CommitSnapshots.FindOrAdd(Member);
+		const float TimeSinceCommit = Snapshot.bHasCommitted ? (NowSeconds - Snapshot.CommitTime) : 0.f;
 
-		// =================================================================
-		// [4-A] 집합형(Arc) 경로 — 기존 그대로. 진입 시 헝가리안 1회, 타겟에 붙어 안정.
-		// =================================================================
-		if (!bMemberSpecific)
+		// [4-3] 컨텍스트 조립 (커밋 경로 + 매틱 디버그 양쪽이 쓴다).
+		FSlotGenContext SlotGenContext;
+		SlotGenContext.BaseRadius        = ComputeBaseRadius(MemberTarget) + Config->RadiusOffset;
+		SlotGenContext.AttackRange       = Member->GetAttackRange();
+		SlotGenContext.RequesterLocation = Member->GetActorLocation();
+		SlotGenContext.LeaderLocation    = LeaderLocation;
+		SlotGenContext.PrimaryTarget     = MemberTarget;
+		SlotGenContext.PerceivedEnemies  = PerceivedEnemies;
+		SlotGenContext.World             = GetWorld();
+		SlotGenContext.OccupiedSlots     = GatherOccupiedSlots(Member);
+
+		// [4-4] 게이트. 첫 커밋(생성 방식 무관 = 컴포넌트 소관) / 유효성(생성의 따름정리 = Strategy 소관).
+		//       타겟이 바뀌면 새 타겟 기준 판정이 스스로 무효화를 만든다 — 별도 "타겟 변경 트리거" 불필요.
+		// ゲート。ターゲット変更は新ターゲット基準の判定が自然に無効化する。
+		const bool bNeedsReposition =
+			   !Snapshot.bHasCommitted
+			|| Config->SlotGenerator->ShouldReposition(SlotGenContext, Snapshot.CommittedSlot, TimeSinceCommit);
+
+		if (bNeedsReposition)
 		{
-			// [A1] 멤버별 슬롯 생성(월드 좌표) → 환경보정.
-			TArray<FVector> WorldSlots;
-			WorldSlots.Reserve(GroupMembers.Num());
-			for (int32 MemberIndex = 0; MemberIndex < GroupMembers.Num(); ++MemberIndex)
-			{
-				FSlotGenContext SlotGenContext;
-				SlotGenContext.TotalSlots        = GroupMembers.Num();
-				SlotGenContext.SlotIndex         = MemberIndex;
-				SlotGenContext.BaseRadius        = GroupBaseRadius;
-				SlotGenContext.Anchor            = Anchor;
-				SlotGenContext.AttackRange       = GroupMembers[MemberIndex]->GetAttackRange();
-				SlotGenContext.RequesterLocation = GroupMembers[MemberIndex]->GetActorLocation();
-				SlotGenContext.LeaderLocation    = LeaderLocation;
-				SlotGenContext.PrimaryTarget     = CurrentTarget.Get();
-				SlotGenContext.PerceivedEnemies  = PerceivedEnemies;
-				SlotGenContext.World             = GetWorld();
-				SlotGenContext.OccupiedSlots     = OccupiedSlots;
-
-				const FVector RawSlot = Config->SlotGenerator->GenerateSlot(SlotGenContext);
-				WorldSlots.Add(AdjustLocationForEnvironment(RawSlot, AnchorOrigin));
-			}
-
-			// [A2] 배정 (진입 시 또는 인원 변동 시 헝가리안 1회, 이후 유지).
-			FRoleGroupRuntime& Runtime = RuntimeGroups.FindOrAdd(Role);
-			if (bNeedsReassignment || Runtime.SlotAssignment.Num() != GroupMembers.Num())
-			{
-				TArray<APartyCharacter*> Assigned = SolveSlotAssignment(GroupMembers, WorldSlots);
-				Runtime.SlotAssignment.Empty(Assigned.Num());
-				for (APartyCharacter* Character : Assigned)
-				{
-					Runtime.SlotAssignment.Add(Character);
-				}
-			}
-
-			// [A3] 저장된 배정대로 push.
-			for (int32 i = 0; i < WorldSlots.Num() && i < Runtime.SlotAssignment.Num(); ++i)
-			{
-				if (APartyCharacter* Character = Runtime.SlotAssignment[i].Get())
-				{
-					Character->UpdateTargetSlotLocation(WorldSlots[i], false);
-				}
-				DrawDebugSphere(GetWorld(), WorldSlots[i], 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
-			}
-
-			// 집합형 슬롯을 점유 리스트에 누적 → 다음(낮은 우선순위) 그룹이 피한다.
-			OccupiedSlots.Append(WorldSlots);
-			++GroupIndex;
-			continue;
+			CommitReposition(Member, SlotGenContext, *Config, Snapshot);
 		}
-
-		// =================================================================
-		// [4-B] 개별형(RangedSafe) 경로 — 유닛별 결정 게이트 (커밋/홀드/재배치).
-		//       매 틱 재결정 제거 → 이동 중 정지(Bug A)·프레임 회전 트위치(Bug B) 사망.
-		// 個別型はユニット別ゲート。毎ティック再決定を排除。
-		// =================================================================
-		const AActor* Target = CurrentTarget.Get();
-		for (APartyCharacter* Member : GroupMembers)
-		{
-			if (!Member) continue;
-
-			FCommitSnapshot& Snapshot = CommitSnapshots.FindOrAdd(Member);
-			const float TimeSinceCommit = Snapshot.bHasCommitted ? (NowSeconds - Snapshot.CommitTime) : 0.f;
-
-			// ── 컨텍스트를 결정 '전에' 조립 (커밋 경로 + 매틱 디버그 양쪽이 쓴다) ──
-			FSlotGenContext SlotGenContext;
-			SlotGenContext.BaseRadius        = GroupBaseRadius;
-			SlotGenContext.Anchor            = Anchor;
-			SlotGenContext.AttackRange       = Member->GetAttackRange();
-			SlotGenContext.RequesterLocation = Member->GetActorLocation();
-			SlotGenContext.LeaderLocation    = LeaderLocation;
-			SlotGenContext.PrimaryTarget     = CurrentTarget.Get();
-			SlotGenContext.PerceivedEnemies  = PerceivedEnemies;
-			SlotGenContext.World             = GetWorld();
-			SlotGenContext.OccupiedSlots     = GatherOccupancyForMemberSpecific(Member, OccupiedSlots);
-
-			const bool bNeedsReposition =
-				   !Snapshot.bHasCommitted
-				|| Config->SlotGenerator->ShouldReposition(SlotGenContext, Snapshot.CommittedSlot, TimeSinceCommit);
-
-			if (bNeedsReposition)
-			{
-				CommitReposition(Member, SlotGenContext, *Config, Snapshot); // GenerateSlot이 후보 그림
-			}
 #if ENABLE_DRAW_DEBUG
-			else if (Config->SlotGenerator)
-			{
-				// 홀드 중에도 매 틱 후보 점수장을 재평가·그리기 (커밋 X, 반환 버림).
-				// ゲート＝コミット判断 / デバッグ可視化＝毎ティック独立に再評価。
-				Config->SlotGenerator->GenerateSlot(SlotGenContext);
-			}
+		else
+		{
+			// 홀드 중에도 매 틱 후보 점수장을 재평가·그리기 (커밋 X, 반환 버림).
+			// ゲート＝コミット判断 / デバッグ可視化＝毎ティック独立に再評価。
+			Config->SlotGenerator->GenerateSlot(SlotGenContext);
+		}
 #endif
 
-			DrawDebugSphere(GetWorld(), Snapshot.CommittedSlot, 30.f, 12, GroupDebugColor(GroupIndex), false, -1.f, 0, 2.f);
-		}
-
-		// 개별형 그룹의 커밋 슬롯은 OccupiedSlots에 누적하지 않는다 —
-		// 다음 그룹 평가는 GatherOccupancyForMemberSpecific가 CommitSnapshots에서 직접 모으므로.
-		// (집합형이 먼저(낮은 priority) 배치되는 설계 전제. 역순이 필요해지면 여기서 누적 추가.)
-		++GroupIndex;
+		DrawDebugSphere(GetWorld(), Snapshot.CommittedSlot, 30.f, 12, GroupDebugColor(DebugIndex), false, -1.f, 0, 2.f);
 	}
+}
 
-	// [5] 재배정 플래그는 모든 그룹 처리 후 일괄 해제.
-	bNeedsReassignment = false;
+float UFormationBattleComponent::ComputeBaseRadius(const AActor* TargetActor) const
+{
+	// 단일 CurrentTarget 버전을 "그 멤버의 타겟" 파라미터로 일반화. ITargetable 조회는 기존 방식 그대로 —
+	// ※ 게터가 BlueprintNativeEvent면 기존 본문의 Execute_ 호출 스타일을 유지할 것.
+	// 単一ターゲット版をメンバー別ターゲットへ一般化。照会方式は既存のまま。
+	if (TargetActor && TargetActor->Implements<UTargetable>())
+	{
+		return ITargetable::Execute_GetEncircleRadius(const_cast<AActor*>(TargetActor));
+	}
+	
+	return 0.f;
+}
 
-	DrawDebugDirectionalArrow(GetWorld(), AnchorOrigin,
-		AnchorOrigin + Anchor.GetRotation().GetForwardVector() * 150.f,
-		60.f, FColor::Red, false, -1.f, 0, 3.f);
+TArray<FVector> UFormationBattleComponent::GatherOccupiedSlots(const APartyCharacter* Requester) const
+{
+	// 점유 = 다른 멤버들의 "커밋된" 슬롯 (live 위치 아님 — 이동 중 노이즈 차단, ADR-0003과 동일 기준).
+	// 소멸한 weak 키·미커밋 스냅샷은 제외. 요청자 자신도 제외 (자기 자리를 자기가 피하면 안 됨).
+	// 占有＝他メンバーの「コミット済み」スロット。無効キー・未コミット・自分自身は除外。
+	TArray<FVector> Result;
+	Result.Reserve(CommitSnapshots.Num());
+	for (const auto& Pair : CommitSnapshots)
+	{
+		const APartyCharacter* Other = Pair.Key.Get();
+		if (!Other || Other == Requester) continue;
+		if (!Pair.Value.bHasCommitted) continue;
+
+		Result.Add(Pair.Value.CommittedSlot);
+	}
+	return Result;
 }
 
 // =========================================================================
@@ -243,38 +185,23 @@ void UFormationBattleComponent::CommitReposition(
 	APartyCharacter* Member, const FSlotGenContext& Context,
 	const FRoleSlotConfig& Config, FCommitSnapshot& OutSnapshot)
 {
-	// [1] 이 순간의 월드로 슬롯 1개 생성. 플레이어 방향은 여기(Strategy 내부 목적지 편향)서만 반영 — 상시 추적 아님.
+	// [1] 이 순간의 월드로 슬롯 1개 생성. 플레이어 방향은 Strategy 내부 목적지 편향으로만 반영 — 상시 추적 아님.
 	// プレイヤー方向はここで一度だけ反映（常時追跡ではない）。
 	const FVector RawSlot = Config.SlotGenerator->GenerateSlot(Context);
 
-	// [2] 환경보정(NavMesh·벽·슬로프). 부모 공통 파이프라인 재사용.
-	const FVector AdjustedSlot = AdjustLocationForEnvironment(RawSlot, Context.Anchor.GetLocation());
+	// [2] 환경보정(NavMesh·벽·슬로프). 끌어당김 기준점.
+	// 環境補正。引き寄せ基準点＝そのメンバーのターゲット。
+	const AActor* Target = Context.PrimaryTarget.Get();
+	const FVector PullOrigin = Target ? Target->GetActorLocation() : Context.RequesterLocation;
+	const FVector AdjustedSlot = AdjustLocationForEnvironment(RawSlot, PullOrigin);
 
-	// [3] 커밋 갱신 + locomotion에 전달. 이후 트리거 전까지 다시 안 건드린다(커밋 잠금).
+	// [3] 커밋: 스냅샷 갱신 + locomotion 전달.
+	// コミット：スナップショット更新＋locomotionへ伝達。
 	OutSnapshot.CommittedSlot = AdjustedSlot;
 	OutSnapshot.CommitTime    = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 	OutSnapshot.bHasCommitted = true;
+
 	Member->UpdateTargetSlotLocation(AdjustedSlot, false);
-
-	// [다음 조각] TargetAtCommit·EnemyCenterAtCommit·점수 스냅샷(T2 드리프트), staleness 타이머 여기.
-}
-
-TArray<FVector> UFormationBattleComponent::GatherOccupancyForMemberSpecific(
-	const APartyCharacter* Self, const TArray<FVector>& GroupOccupied) const
-{
-	// 이미 배치된 집합형 그룹 슬롯 + 나를 제외한 다른 유닛들의 "현재 커밋 슬롯".
-	// 매 틱 재생성한 임시 슬롯이 아니라 남들이 실제로 향하는 확정 위치를 읽으므로
-	// 같은 그룹 내 동시 생성 충돌이 구조적으로 없다(Bug 1 수정).
-	// 他ユニットの実コミット位置を読むため同時生成衝突なし（Bug 1修正）。
-	TArray<FVector> Out = GroupOccupied;
-	for (const TPair<TWeakObjectPtr<APartyCharacter>, FCommitSnapshot>& Pair : CommitSnapshots)
-	{
-		if (Pair.Value.bHasCommitted && Pair.Key.IsValid() && Pair.Key.Get() != Self)
-		{
-			Out.Add(Pair.Value.CommittedSlot);
-		}
-	}
-	return Out;
 }
 
 // ===========
@@ -287,32 +214,4 @@ const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGamep
 	{
 		return Config.Role == Role;
 	});
-}
-
-TOptional<FTransform> UFormationBattleComponent::GetFormationAnchor() const
-{
-	// 약참조 유효성 = 타겟 살아있음. 죽었으면 빈 Optional → 호출부가 파이프라인 정지.
-	if (const AActor* Target = CurrentTarget.Get())
-	{
-		return Target->GetActorTransform();
-	}
-	return TOptional<FTransform>();
-}
-
-float UFormationBattleComponent::ComputeBaseRadius() const
-{
-	float TargetRadius = 0.f;
-
-	// 타겟이 ITargetable이면 자기 포위 반경을 답한다. 구체 타입 캐스트 없음 —
-	// Formation은 타겟이 적인지 더미인지 기믹인지 모른다.
-	// 具体型キャストなし。Formationは対象の種類を知らない。
-	if (AActor* Target = CurrentTarget.Get())
-	{
-		if (Target->Implements<UTargetable>())
-		{
-			TargetRadius = ITargetable::Execute_GetEncircleRadius(Target);
-		}
-	}
-
-	return TargetRadius;
 }

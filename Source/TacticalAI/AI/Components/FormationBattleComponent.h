@@ -42,14 +42,6 @@ struct FRoleSlotConfig
 	int32 PlacementPriority = 0;
 };
 
-// 역할군별 런타임 상태 (집합형 헝가리안 배정 결과 유지).
-// weak ptr이므로 GC 추적 배관 불필요 — 캐릭터 소멸 시 자동 null.
-// weak ptrなのでGC追跡不要。キャラ消滅時は自動でnull化。
-struct FRoleGroupRuntime
-{
-	TArray<TWeakObjectPtr<APartyCharacter>> SlotAssignment;
-};
-
 // =========================================================================
 // 유닛 1명의 재배치 커밋 상태 (개별형/MemberSpecific 전용).
 // "어디로 가기로 했나"를 들고, 검증·홀드의 기준점이 된다. 매 틱 재생성 대신
@@ -71,14 +63,13 @@ struct FCommitSnapshot
 
 /**
  * 전투 진형 컴포넌트.
- * anchor = 타겟 transform. 동료를 CombatRole 태그로 그룹 분리 → 그룹별 Strategy.
+ * 동료를 CombatRole 태그로 그룹 분리 → 그룹별 Strategy.
  *
- * 배정 정책 2갈래:
- *  - GroupHungarian(Arc/근접): 슬롯을 집합 생성 → 진입 시 헝가리안 1회 → 타겟에 붙어 안정.
- *  - MemberSpecific(RangedSafe/원거리): 유닛별 커밋. 매 틱 재결정이 아니라 트리거가 떴을
- *    때만 재배치하고 그 사이엔 슬롯을 잠근다 → 이동 중 정지·프레임 회전 트위치 제거.
- *
- * 戦闘隊形コンポーネント。集合型は進入時1回割当、個別型はトリガー時のみ再配置しコミットを固定。
+ * 동료를 멤버별로 순회, 각자의 (역할→Strategy, 자기 타겟) 기준 커밋 게이트.
+ * 재배치는 트리거 시에만, 그 사이 슬롯 잠금.
+ * 
+ * 戦闘隊形コンポーネント。
+ * メンバー別コミットゲート。再配置はトリガー時のみ、間はスロット固定。
  */
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UFormationBattleComponent : public UTacticalFormationComponent
@@ -88,30 +79,21 @@ class TACTICALAI_API UFormationBattleComponent : public UTacticalFormationCompon
 public:
 	UFormationBattleComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	virtual void BeginPlay() override;
-
-	UPROPERTY(EditAnywhere, Category = "Battle|Debug")
-	TObjectPtr<AActor> DebugTargetActor;
-
-	/** 외부(나중엔 [1] 타겟선정/Manager)에서 교전 타겟 지정. 지금은 에디터/테스트에서 직접 호출. */
-	UFUNCTION(BlueprintCallable, Category = "Battle")
-	void SetCombatTarget(AActor* InTarget) { CurrentTarget = InTarget; }
 
 protected:
 	// 역할군별 슬롯 생성 설정. 태그 미지정/미등록 역할은 Melee 설정으로 폴백.
 	// 役割別スロット生成設定。未設定の役割はMeleeへフォールバック。
 	UPROPERTY(EditAnywhere, Category = "Battle")
 	TArray<FRoleSlotConfig> RoleSlotConfigs;
-	
-	// 교전 타겟. 약참조 — 타겟 소멸 시 댕글링 방지 (anchor TOptional의 근거).
-	TWeakObjectPtr<AActor> CurrentTarget;
 
 private:
-	// [a] 기준 프레임. 타겟 유효하면 그 transform, 아니면 미반환(파이프라인 정지).
-	TOptional<FTransform> GetFormationAnchor() const;
+	// 타겟의 포위 반경(ITargetable). 멤버별 타겟에 대응.
+	// ターゲットの包囲半径ベースの表面間隔。メンバー別ターゲット対応。
+	float ComputeBaseRadius(const AActor* TargetActor) const;
 
-	// 최종 반경 산출 (디자이너 기본 + 타겟 크기 보정). Strategy는 이 출처를 모른다.
-	float ComputeBaseRadius() const;
+	// 다른 멤버들의 커밋 슬롯 수집.
+	// 他メンバーのコミット済みスロット収集。唯一の占有ソース。
+	TArray<FVector> GatherOccupiedSlots(const APartyCharacter* Requester) const;
 
 	// 역할 태그에 해당하는 설정 검색. 없으면 nullptr (호출부가 폴백 결정).
 	const FRoleSlotConfig* FindConfigForRole(const FGameplayTag& Role) const;
@@ -128,24 +110,10 @@ private:
 	void CommitReposition(APartyCharacter* Member, const FSlotGenContext& Context,
 		const FRoleSlotConfig& Config, FCommitSnapshot& OutSnapshot);
 
-	// 개별형 점유 입력 수집: 이미 배치된 그룹들의 슬롯 + 나를 제외한 다른 유닛들의 커밋 슬롯.
-	// 매 틱 재생성이 아니라 "남들이 실제로 선 자리(커밋)"를 읽으므로 동시성 충돌이 없다(Bug 1 수정).
-	// 「他ユニットの実コミット位置」を読むため同時生成の衝突が起きない（Bug 1修正）。
-	TArray<FVector> GatherOccupancyForMemberSpecific(const APartyCharacter* Self, const TArray<FVector>& GroupOccupied) const;
-
 protected:
-	// =========================================================================
-	// 집합형(Arc) 그룹별 슬롯 배정 저장 (진입 시 헝가리안으로 1회 결정, 전투 중 유지).
-	// 個別型はこれを使わず、CommitSnapshotsで管理する。
-	// =========================================================================
-	TMap<FGameplayTag, FRoleGroupRuntime> RuntimeGroups;
-
-	// 개별형(RangedSafe) 캐릭터별 커밋 상태. weak ptr 키 — 소멸 시 .Get()==null로 거른다.
+	// 캐릭터별 커밋 상태. weak ptr 키 — 소멸 시 .Get()==null로 거른다.
 	// 個別型のキャラ別コミット状態。
 	TMap<TWeakObjectPtr<APartyCharacter>, FCommitSnapshot> CommitSnapshots;
-
-	// 재배정 필요 플래그. 전투 진입(Activate) 시 true. 집합형 헝가리안에 적용.
-	bool bNeedsReassignment = true;
 
 public:
 	// 활성화 시 재배정 예약 + 개별형 커밋 초기화 (진입 시 전원 초기 배치).

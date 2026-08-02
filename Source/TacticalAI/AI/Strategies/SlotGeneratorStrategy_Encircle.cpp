@@ -5,18 +5,21 @@
 
 FVector USlotGeneratorStrategy_Encircle::GenerateSlot(const FSlotGenContext& Context) const
 {
-	// [1] 링 중심 = 타겟, 반경 = BaseRadius(타겟 크기 포함 이격) + 자기 사거리 × 비율.
+	// [1] 링 중심 = 자기 타겟, 반경 = 표면 이격(BaseRadius) + 자기 사거리 × 비율.
 	//     판정(ShouldReposition)도 같은 BaseRadius를 빼고 보므로 생성·판정이 동일 좌표계 —
 	//     "커밋 즉시 사거리 이탈" 재커밋 루프가 구조적으로 불가능.
-	// 中心＝ターゲット、半径＝BaseRadius＋射程×比率。生成と判定が同座標系のため再コミットループ不可。
+	// 中心＝自分のターゲット、半径＝表面間隔＋射程×比率。生成と判定が同座標系。
 	const AActor* Target = Context.PrimaryTarget.Get();
-	const FVector TargetLoc = Target ? Target->GetActorLocation() : Context.Anchor.GetLocation();
-	const float Radius = Context.AttackRange * PreferredRangeRatio + Context.BaseRadius;
-	
-	
+	if (!Target)
+	{
+		return Context.RequesterLocation;
+	}
+	const FVector TargetLoc = Target->GetActorLocation();
+	const float Radius = FMath::Max(Context.BaseRadius + Context.AttackRange * PreferredRangeRatio, 1.f);
+
 	// [2] 희망 각도 = 내 접근 방향(타겟→나). 타겟 facing과 무관 — 적이 회전해도 불변.
 	//     퇴화(타겟과 겹침) 시 리더 쪽 폴백 — 아군 진영 쪽에서 진입하는 게 자연스럽다.
-	// 希望角度＝自分の接近方向（ターゲット→自分）。ターゲットの向きとは無関係。
+	// 希望角度＝自分の接近方向。ターゲットの向きとは無関係。
 	FVector ApproachDir = (Context.RequesterLocation - TargetLoc).GetSafeNormal2D();
 	if (ApproachDir.IsNearlyZero())
 	{
