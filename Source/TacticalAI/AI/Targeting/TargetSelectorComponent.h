@@ -100,6 +100,11 @@ private:
 	// 次評価までの残時間。TickIntervalの位相整列を避けるため手動累積。
 	float TimeUntilNextEvaluation = 0.f;
 
+	// 현재 타겟 강제 유지 잔여 시간. 결정 주도 정책의 HoldDuration과 연계.
+	// 양수인 동안 주기 평가를 스킵한다. 타겟 상실 시엔 즉시 0.
+	// ターゲット強制維持の残時間。正の間は周期評価をスキップ。喪失時は即0。
+	float RemainingHoldTime = 0.f;
+	
 	// 다음 평가에 적용할 사유.
 	// 次評価に適用する理由。
 	ETargetChangeReason PendingReason = ETargetChangeReason::Periodic;

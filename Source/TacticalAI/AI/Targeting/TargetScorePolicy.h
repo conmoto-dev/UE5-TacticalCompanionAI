@@ -69,6 +69,18 @@ public:
 	{
 		return 0.f;
 	}
+	
+	// 셀렉터의 결정 귀속([3])이 읽는다. 값 자체는 protected — 편집은 에디터, 로직은 읽기만.
+	float GetHoldDuration() const { return HoldDuration; }
+
+protected:
+	// 이 정책이 결정을 주도했을 때(승리 후보에 대한 가중 기여 최대) 타겟을 유지할 시간(초).
+	// 기본값은 각 정책 클래스가 자기 결정의 성격에 맞게 생성자에서 선언.
+	// 0 = 유지 없음. Instanced이므로 캐릭터 BP에서 개별 오버라이드 가능.
+	// このポリシーが決定を主導した際のターゲット維持時間(秒)。既定値は各ポリシークラスが
+	// 自分の決定の性格に合わせてコンストラクタで宣言。キャラBPで個別上書き可能。
+	UPROPERTY(EditAnywhere, Category = "Targeting", meta = (ClampMin = "0.0", Units = "s"))
+	float HoldDuration = 1.f;
 };
 
 // =========================================================================

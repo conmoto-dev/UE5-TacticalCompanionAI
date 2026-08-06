@@ -51,13 +51,19 @@ void UTargetSelectorComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 		}
 	}
 
-	// [2] 주기 평가. 만료 시 보관된 사유로 평가 후, 사유 리셋 + 다음 주기 지터 재추첨.
-	// 周期評価。満了で保管中の理由で評価し、理由リセット＋次周期をジッターで再抽選。
+	// [2] 주기 평가. 홀드 중엔 스킵 — 결정 주도 정책이 선언한 시간만큼 타겟을 신뢰한다.
+	//     홀드·평가 타이머는 병행 감소: 홀드 만료 후 다음 주기 만료 시점에 재평가
+	//     (홀드 경계 동시 전환 방지 — 어긋난 박동이 홀드 뒤에도 유지된다).
+	// 周期評価。ホールド中はスキップ。両タイマー並行減算で位相のずれを維持。
 	TimeUntilNextEvaluation -= DeltaTime;
+	RemainingHoldTime -= DeltaTime;
 	if (TimeUntilNextEvaluation <= 0.f)
 	{
-		EvaluateTargets(PendingReason);
-		PendingReason = ETargetChangeReason::Periodic;
+		if (RemainingHoldTime <= 0.f)
+		{
+			EvaluateTargets(PendingReason);
+			PendingReason = ETargetChangeReason::Periodic;
+		}
 		TimeUntilNextEvaluation = RollNextInterval();
 	}
 
@@ -107,9 +113,27 @@ void UTargetSelectorComponent::EvaluateTargets(const ETargetChangeReason Reason)
 		}
 	}
 
-	// [3] 커밋. 교체 마진 없음 — 그 시점 최고점을 그대로 채택
-	//     타겟을 공격 불가능한 위치일 시 처리는 Formation에서 처리되어있음. 이동 후 바로 타겟 변경은 자연스러운 결과? 인게임 평가 필요.
-	// コミット。切替マージンなし — 動的な切替は抑制対象ではない（実測後に再検討）。
+	// [3] 결정 귀속: 승자에 대한 가중 기여가 최대인 정책이 "결정 주도" — 그 행의 유지시간 채택.
+	// 決定帰属：勝者への加重寄与が最大のポリシーが主導 — その行の維持時間を採用。
+	RemainingHoldTime = 0.f;
+	if (BestTarget)
+	{
+		float BestContribution = 0.f;
+		for (const FWeightedTargetPolicy& Entry : Policies)
+		{
+			if (!Entry.Policy) continue;
+
+			const float Contribution = Entry.Weight * Entry.Policy->ScoreTarget(Context, BestTarget);
+			if (Contribution > BestContribution)
+			{
+				BestContribution = Contribution;
+				RemainingHoldTime = Entry.Policy->GetHoldDuration();
+			}
+		}
+	}
+
+	// [4] 커밋. 주기 단위 교체 마진은 없음 — 억제는 홀드(시간 구조)가 담당.
+	// コミット。周期単位の切替マージンは無し — 抑制はホールド（時間構造）の担当。
 	CommitTarget(BestTarget, BestTarget ? Reason : ETargetChangeReason::NoCandidates);
 }
 
@@ -145,6 +169,7 @@ void UTargetSelectorComponent::ScheduleReactionReevaluation()
 	// 즉시 재평가가 아니라 랜덤 반응 지연 후 평가
 	// 전원 동일 프레임 전환(기계감)을 방지. 사유는 보관해 다음 평가에 적용.
 	// 即時ではなくランダム反応遅延後に評価。理由は保管し次評価に適用。
+	RemainingHoldTime = 0.f;
 	PendingReason = ETargetChangeReason::TargetLost;
 	TimeUntilNextEvaluation = FMath::FRandRange(
 		FMath::Max(0.f, (float)ReactionDelayRange.X),
