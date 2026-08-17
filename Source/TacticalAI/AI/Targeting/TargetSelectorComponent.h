@@ -61,7 +61,10 @@ protected:
 
 	virtual TArray<AActor*> GatherCandidates() const
 		PURE_VIRTUAL(UTargetSelectorComponent::GatherCandidates, return TArray<AActor*>(););
-
+	
+	FColor DebugTargetLineColor = FColor::Magenta;
+	float DebugTargetLineZOffset = 60.f;
+	
 private:
 	void EvaluateTargets(ETargetChangeReason Reason);
 	void CommitTarget(AActor* NewTarget, ETargetChangeReason Reason);

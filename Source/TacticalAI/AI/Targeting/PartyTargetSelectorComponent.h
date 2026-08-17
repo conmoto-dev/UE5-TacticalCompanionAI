@@ -11,6 +11,8 @@ UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UPartyTargetSelectorComponent : public UTargetSelectorComponent
 {
 	GENERATED_BODY()
+	
+	UPartyTargetSelectorComponent();
 
 protected:
 	virtual FTargetingContext BuildContext() const override;

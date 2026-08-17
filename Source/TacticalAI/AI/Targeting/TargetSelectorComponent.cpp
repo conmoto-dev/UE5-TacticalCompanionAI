@@ -72,8 +72,11 @@ void UTargetSelectorComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 	{
 		if (const AActor* Target = CurrentTarget.Get())
 		{
-			DrawDebugLine(GetWorld(), GetOwner()->GetActorLocation(),
-				Target->GetActorLocation(), FColor::Magenta, false, -1.f, 0, 1.5f);
+			const FVector ZOffset(0.f, 0.f, DebugTargetLineZOffset);
+			DrawDebugDirectionalArrow(GetWorld(),
+				GetOwner()->GetActorLocation() + ZOffset,
+				CurrentTarget->GetActorLocation() + ZOffset,
+				120.f, DebugTargetLineColor, false, -1.f, 0, 2.f);
 		}
 	}
 #endif

@@ -2,6 +2,13 @@
 #include "Characters/PartyCharacter.h"
 #include "Party/PartyManager.h"
 
+UPartyTargetSelectorComponent::UPartyTargetSelectorComponent()
+{
+	// 味方のターゲットライン：シアン、低め。
+	DebugTargetLineColor = FColor::Cyan;
+	DebugTargetLineZOffset = 10.f;
+}
+
 FTargetingContext UPartyTargetSelectorComponent::BuildContext() const
 {
 	FTargetingContext Context;

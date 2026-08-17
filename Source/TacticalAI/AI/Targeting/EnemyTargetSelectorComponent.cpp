@@ -2,6 +2,13 @@
 #include "Characters/EnemyCharacter.h"
 #include "Enemies/Group/EnemyGroup.h"
 
+UEnemyTargetSelectorComponent::UEnemyTargetSelectorComponent()
+{
+	// 敵のターゲットライン：赤、高め。
+	DebugTargetLineColor = FColor::Red;
+	DebugTargetLineZOffset = 20.f;
+}
+
 FTargetingContext UEnemyTargetSelectorComponent::BuildContext() const
 {
 	FTargetingContext Context;
