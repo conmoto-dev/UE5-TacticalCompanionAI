@@ -215,3 +215,15 @@ const FRoleSlotConfig* UFormationBattleComponent::FindConfigForRole(const FGamep
 		return Config.Role == Role;
 	});
 }
+
+bool UFormationBattleComponent::TryGetCommittedSlot(const APartyCharacter* Member, FVector& OutSlot) const
+{
+	// const_cast는 TMap 키 타입(TWeakObjectPtr<APartyCharacter>)의 조회용 임시 키 생성 때문.
+	// 값 변경 없음 — 이 함수는 읽기 전용.
+	// const_castはTMapキー型の照会用一時キー生成のため。値の変更なし。
+	const FCommitSnapshot* Snapshot = CommitSnapshots.Find(const_cast<APartyCharacter*>(Member));
+	if (!Snapshot || !Snapshot->bHasCommitted) return false;
+
+	OutSlot = Snapshot->CommittedSlot;
+	return true;
+}

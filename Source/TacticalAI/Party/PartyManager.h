@@ -68,12 +68,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Formation")
 	void SetFormationMode(EPartyFormationMode NewMode);
 
+	// 현재 진형 모드 조회. 캐릭터 쪽(홈 슬롯 공급, 미세 이동 등)이 자기 동작 조건 검사에 읽는다.
+	// 現在の隊形モード照会。キャラ側が自分の動作条件の検査に読む。
+	EPartyFormationMode GetFormationMode() const { return CurrentFormationMode; }
+	
 	/** 인지한 적 전체 조회 (유효한 것만). 모드 결정·포메이션·추후 타겟팅이 공유하는 단일 소스. */
 	/** 知覚した敵全体を返す。モード判断・隊形・将来のターゲティングが共有する単一ソース。 */
 	TArray<AActor*> GetPerceivedEnemies() const;
 	
 	// public 게터 추가 (추후 타겟 시스템이 그룹 단위 조회할 창구):
 	UPartyPerceptionComponent* GetPerception() const { return PerceptionComponent; }
+	
+	// 전투 진형 컴포넌트 조회. 캐릭터의 홈 슬롯 공급(IHomeSlotProvider)이 커밋 슬롯을 읽을 때 사용.
+	// 戦闘隊形コンポーネント照会。キャラのホームスロット供給がコミットスロットを読む際に使用。
+	UFormationBattleComponent* GetFormationBattleComponent() const { return BattleComponent; }
 	
 protected:
 	/** Formation system component. Performs slot calculation and pushes targets to followers. */

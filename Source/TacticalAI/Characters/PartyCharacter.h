@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "Characters/TacticalCharacterBase.h"
+#include "AI/Interfaces/HomeSlotProvider.h"
 #include "PartyCharacter.generated.h"
 
 class USpringArmComponent;
@@ -14,6 +15,7 @@ struct FInputActionValue;
 class APartyManager;
 class UTargetSelectorComponent;
 class UPartyTargetSelectorComponent;
+class UCombatMicroMovementComponent;
 
 /**
  * 동료(파티) 캐릭터. 진형에서 수동적 — 좌표를 FormationFollowComponent에서 받아
@@ -26,7 +28,7 @@ class UPartyTargetSelectorComponent;
  * リーダー交代で憑依されるためカメラ・入力を保有 — ここが敵との分岐点。
  */
 UCLASS()
-class TACTICALAI_API APartyCharacter : public ATacticalCharacterBase
+class TACTICALAI_API APartyCharacter : public ATacticalCharacterBase, public IHomeSlotProvider
 {
 	GENERATED_BODY()
 
@@ -74,6 +76,10 @@ public:
 	// 戦闘ポジショニングの役割を返す。
 	FGameplayTag GetCombatRole() const { return CombatRole; }
 
+	// IHomeSlotProvider 구현. 전투 모드의 커밋 슬롯만 공급.
+	// IHomeSlotProvider実装。戦闘モードのコミットスロットのみ供給。
+	virtual bool TryGetHomeSlot(FVector& OutHomeSlot) const override;
+	
 	// 이 캐릭터의 기준 교전 사거리 조회. 슬롯 생성 시 Context로 전달된다.
 	// 戦闘の基準射程を返す。スロット生成時にContextへ渡る。
 	float GetAttackRange() const { return AttackRange; }
@@ -153,6 +159,11 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Targeting")
 	TObjectPtr<UPartyTargetSelectorComponent> TargetSelector;
 
+	/** 전투 중 미세 이동 컴포넌트. 튜닝 값은 BP 인스턴스에서 편집. */
+	/** 戦闘中の微細移動コンポーネント。チューニング値はBPで編集。 */
+	UPROPERTY(VisibleAnywhere, Category = "Combat")
+	TObjectPtr<UCombatMicroMovementComponent> MicroMovement;
+	
 private:
 	TWeakObjectPtr<APartyManager> OwningPartyManager;
 };

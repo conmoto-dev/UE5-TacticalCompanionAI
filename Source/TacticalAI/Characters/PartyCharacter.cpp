@@ -10,7 +10,9 @@
 #include "InputActionValue.h"
 #include "AI/Components/PlayerCrowdAgentComponent.h"
 #include "AI/CombatRoleTags.h"
-#include "TacticalAI.h"   // LogTacticalAI
+#include "TacticalAI.h"
+#include "AI/Components/CombatMicroMovementComponent.h"
+#include "AI/Components/FormationBattleComponent.h"
 #include "AI/Targeting/PartyTargetSelectorComponent.h"
 #include "Party/PartyManager.h"
 
@@ -47,6 +49,8 @@ APartyCharacter::APartyCharacter()
 	CombatRole = CombatRoleTags::Melee;
 	
 	TargetSelector = CreateDefaultSubobject<UPartyTargetSelectorComponent>(TEXT("TargetSelector"));
+	
+	MicroMovement = CreateDefaultSubobject<UCombatMicroMovementComponent>(TEXT("MicroMovement"));
 }
 
 void APartyCharacter::BeginPlay()
@@ -166,4 +170,21 @@ APartyManager* APartyCharacter::GetPartyManager() const
 UTargetSelectorComponent* APartyCharacter::GetTargetSelector() const
 {
 	return TargetSelector;
+}
+
+bool APartyCharacter::TryGetHomeSlot(FVector& OutHomeSlot) const
+{
+	// [1] 소속 확인 + 전투 모드 검사. 경로는 캐릭터 → Manager 읽기 단방향 (back-ref, 등록 시 주입).
+	// [1] 所属確認＋戦闘モード検査。キャラ→Manager読み取りの単方向。
+	const APartyManager* Manager = OwningPartyManager.Get();
+	if (!Manager || Manager->GetFormationMode() != EPartyFormationMode::Battle) return false;
+
+	// [2] 전투 진형 컴포넌트 확보.
+	// [2] 戦闘隊形コンポーネント確保。
+	const UFormationBattleComponent* Battle = Manager->GetFormationBattleComponent();
+	if (!Battle) return false;
+
+	// [3] 커밋 슬롯 조회. 미커밋(전투 진입 직후 첫 배치 전 등)이면 홈 슬롯 없음.
+	// [3] コミットスロット照会。未コミットならホームスロット無し。
+	return Battle->TryGetCommittedSlot(this, OutHomeSlot);
 }

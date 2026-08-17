@@ -112,10 +112,15 @@ private:
 
 protected:
 	// 캐릭터별 커밋 상태. weak ptr 키 — 소멸 시 .Get()==null로 거른다.
-	// 個別型のキャラ別コミット状態。
+	// 갱신은 이 컴포넌트의 재배치 판단(TickComponent)만 한다. 외부엔 읽기 조회만 연다.
+	// 個別型のキャラ別コミット状態。更新は本コンポーネントのゲートロジックのみ。外部は読み取りのみ。
 	TMap<TWeakObjectPtr<APartyCharacter>, FCommitSnapshot> CommitSnapshots;
 
 public:
 	// 활성화 시 재배정 예약 + 개별형 커밋 초기화 (진입 시 전원 초기 배치).
 	virtual void Activate(bool bReset = false) override;
+	
+	// 해당 멤버의 커밋 슬롯(홈 슬롯) 조회. IHomeSlotProvider 구현부(캐릭터)가 읽는 데이터 소스.
+	// 該当メンバーのコミット済みスロット（ホームスロット）照会。
+	bool TryGetCommittedSlot(const APartyCharacter* Member, FVector& OutSlot) const;
 };
