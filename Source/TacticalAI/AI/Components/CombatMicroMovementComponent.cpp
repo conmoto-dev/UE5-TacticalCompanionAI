@@ -9,7 +9,7 @@
 #include "Characters/PartyCharacter.h"
 #include "DrawDebugHelpers.h"
 
-// 미세 이동 디버그 표시. 홈 슬롯 반경(원) / 이동 목표(구+선) / 대기·정지 상태(색).
+// 미세 이동 디버그 표시. 홈 슬롯 반경(원) / 이동 방향(화살표) / 대기 시간.
 // 微細移動デバッグ表示。ホームスロット半径／移動目標／待機・停止状態。
 static TAutoConsoleVariable<bool> CVarDebugMicroMovement(
 	TEXT("TacticalAI.DebugMicroMovement"), false,
@@ -210,7 +210,7 @@ void UCombatMicroMovementComponent::EndCombatFacing()
 
 	UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
 	if (!MoveComp) return;
-
+	
 	MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
 	
 	bCombatFacing = false;
@@ -237,9 +237,8 @@ void UCombatMicroMovementComponent::DrawDebug(bool bActive, const FVector& HomeS
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	// [1] 홈 슬롯 반경. 흰색 = 검사 통과(동작 가능), 회색 = 어떤 검사에서 정지 중.
-	//     HomeSlot이 무효(검사 [3] 이전 실패)면 좌표가 쓰레기이므로 반경은 통과 시에만.
-	// [1] ホームスロット半径。白＝検査通過、灰＝停止中。座標が有効な時のみ描画。
+	// [1] 홈 슬롯 반경.
+	// [1] ホームスロット半径。座標が有効な時のみ描画。
 	if (bActive)
 	{
 		DrawDebugCircle(World, HomeSlot + FVector(0, 0, 5.f), HomeTolerance, 32,
