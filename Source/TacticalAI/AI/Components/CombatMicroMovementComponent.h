@@ -83,12 +83,13 @@ private:
 	
 	// 이동 시작/종료 시 회전 방식 전환 (이동 방향 자동 회전 ↔ 타겟 방향 고정).
 	// 移動開始/終了時の回転方式切替。
-	void BeginStrafeFacing();
-	void EndStrafeFacing();
+	void BeginCombatFacing();
+	void EndCombatFacing();
 
 	// 현재 이동 목표를 향해 이동 중인가.
 	bool bStrafing = false;
-
+	bool bCombatFacing = false;
+	
 	// 외부 일시 정지 상태 (공격 중 등).
 	bool bSuppressed = false;
 

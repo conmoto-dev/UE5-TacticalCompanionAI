@@ -25,8 +25,9 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// [1] 동작 조건 검사. 실패 시 진행 중이던 이동도 중단 — MoveTo(재배치 등)와 공격이 항상 우선.
-	// [1] 動作条件検査。失敗時は進行中の移動も中断 — MoveToと攻撃が常に優先。
+	// [1] 동작 조건 검사. 실패 시 이동·주시 모두 해제 — MoveTo(재배치 등)와 공격이 항상 우선.
+	//     통과/이탈 경계가 곧 "전투 대기 거동(주시+미세 이동)"의 시작/끝.
+	// [1] 動作条件検査。失敗時は移動・注視とも解除。通過/離脱の境界が戦闘待機挙動の開始/終了。
 	FVector HomeSlot;
 	const AActor* Target = nullptr;
 	const bool bActive = PassesActivationChecks(HomeSlot, Target);
@@ -40,19 +41,37 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 	if (!bActive)
 	{
-		if (bStrafing)
+		if (bCombatFacing)
 		{
 			bStrafing = false;
-			EndStrafeFacing();
+			EndCombatFacing();
 		}
 		return;
 	}
-	
+
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
-	
-	// [2] 대기 중: 타이머 소진 후 방향·지속시간 확정하고 이동 시작.
-	// [2] 待機中：タイマー消化後、方向と持続時間を確定して移動開始。
+
+	// [2] 타겟 주시 — 이동 여부와 무관하게 검사 통과 중엔 상시. 도착 직후 엉뚱한 방향으로
+	//     서 있던 것이 여기서 해소된다 (MoveTo 종료 → Idle → 즉시 주시 보간 시작).
+	// [2] ターゲット注視 — 移動の有無に関わらず検査通過中は常時。到着直後の向き放置をここで解消。
+	if (!bCombatFacing)
+	{
+		BeginCombatFacing();
+	}
+
+	const FVector MyLoc = OwnerCharacter->GetActorLocation();
+	const FVector ToTarget = (Target->GetActorLocation() - MyLoc).GetSafeNormal2D();
+	if (!ToTarget.IsNearlyZero())
+	{
+		const FRotator DesiredYaw(0.f, ToTarget.Rotation().Yaw, 0.f);
+		const FRotator NewRotation = FMath::RInterpTo(
+			OwnerCharacter->GetActorRotation(), DesiredYaw, DeltaTime, FaceTargetInterpSpeed);
+		OwnerCharacter->SetActorRotation(NewRotation);
+	}
+
+	// [3] 대기 중: 타이머 소진 후 방향·지속시간 확정하고 이동 시작.
+	// [3] 待機中：タイマー消化後、方向と持続時間を確定して移動開始。
 	if (!bStrafing)
 	{
 		TimeUntilNextStrafe -= DeltaTime;
@@ -64,8 +83,7 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 		if (!TryPickStrafeDirection(HomeSlot, *Target, StrafeDirection)) return;
 
-		// 이동으로 위치가 틀어지면 이동 명령 캐시(UpdateThreshold) 때문에
-		// 다음 재배치 명령이 스킵될 수 있다 → 이동을 가로채는 기능의 기존 규약대로 캐시 무효화.
+		// 슬롯 위치가 조금만 변경될 때 갱신을 건너뛰는 것을 생략하기 위한 캐시 무효화.
 		// 位置がずれると移動命令キャッシュで次の再配置命令がスキップされうる → 既存規約通り無効化。
 		if (APartyCharacter* PartyChar = Cast<APartyCharacter>(OwnerCharacter))
 		{
@@ -76,33 +94,20 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 			FMath::Min(StrafeDurationRange.X, StrafeDurationRange.Y),
 			FMath::Max(StrafeDurationRange.X, StrafeDurationRange.Y));
 		bStrafing = true;
-		BeginStrafeFacing();
 		return;
 	}
 
-	// [3] 이동 실행: 확정된 방향으로 지속시간 동안 걷는다. 중간에 자르지 않음 —
+	// [4] 이동 실행: 확정된 방향으로 지속시간 동안 걷는다. 중간에 자르지 않음 —
 	//     반경 밖으로 나가도 완주하고, 되돌리기는 다음 이동의 방향 규칙이 담당한다.
-	//     몸은 이동 방향이 아니라 타겟 방향 — 옆걸음/뒷걸음이 여기서 나온다.
-	// [3] 移動実行：確定方向へ持続時間だけ歩く。途中で切らない。体はターゲット方向。
+	// [4] 移動実行：確定方向へ持続時間だけ歩く。途中で切らない。
 	StrafeTimeRemaining -= DeltaTime;
 	if (StrafeTimeRemaining <= 0.f)
 	{
 		bStrafing = false;
-		EndStrafeFacing();
 		return;
 	}
 
 	OwnerCharacter->AddMovementInput(StrafeDirection, StrafeSpeedScale);
-
-	const FVector MyLoc = OwnerCharacter->GetActorLocation();
-	const FVector ToTarget = (Target->GetActorLocation() - MyLoc).GetSafeNormal2D();
-	if (!ToTarget.IsNearlyZero())
-	{
-		const FRotator DesiredYaw(0.f, ToTarget.Rotation().Yaw, 0.f);
-		const FRotator NewRotation = FMath::RInterpTo(
-			OwnerCharacter->GetActorRotation(), DesiredYaw, DeltaTime, FaceTargetInterpSpeed);
-		OwnerCharacter->SetActorRotation(NewRotation);
-	}
 }
 
 bool UCombatMicroMovementComponent::PassesActivationChecks(FVector& OutHomeSlot, const AActor*& OutTarget) const
@@ -182,7 +187,7 @@ bool UCombatMicroMovementComponent::TryPickStrafeDirection(const FVector& HomeSl
 	return true;
 }
 
-void UCombatMicroMovementComponent::BeginStrafeFacing()
+void UCombatMicroMovementComponent::BeginCombatFacing()
 {
 	// 이동 방향 자동 회전을 끄고 타겟 방향 고정으로. 원본 값 저장 → 종료 시 복원 (캐릭터 전역 설정 존중).
 	// 移動方向の自動回転を切りターゲット方向固定へ。原本保存→終了時復元。
@@ -194,9 +199,11 @@ void UCombatMicroMovementComponent::BeginStrafeFacing()
 
 	bSavedOrientRotationToMovement = MoveComp->bOrientRotationToMovement;
 	MoveComp->bOrientRotationToMovement = false;
+
+	bCombatFacing = true;
 }
 
-void UCombatMicroMovementComponent::EndStrafeFacing()
+void UCombatMicroMovementComponent::EndCombatFacing()
 {
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
@@ -205,15 +212,17 @@ void UCombatMicroMovementComponent::EndStrafeFacing()
 	if (!MoveComp) return;
 
 	MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+	
+	bCombatFacing = false;
 }
 
 void UCombatMicroMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	// 이동 도중 파괴/제거 대비 — 회전 방식 원상 복구.
 	// 移動中の破棄に備え、回転方式を復元。
-	if (bStrafing)
+	if (bCombatFacing)
 	{
-		EndStrafeFacing();
+		EndCombatFacing();
 	}
 	Super::EndPlay(EndPlayReason);
 }
