@@ -122,7 +122,7 @@ void APartyManager::TickModeDecision()
 	const APartyCharacter* Leader = GetLeader();
 	if (!Leader) return;
 
-	// [1] 최근접 적과의 거리 산출. 적이 하나도 없으면 판단 안 함 (현 모드 유지).
+	// [1] 최근접 적과의 거리 산출.
 	//     모드 판단 기준은 리더(=플레이어) — 동료가 아니라 플레이어의 교전 상태가 파티 모드를 결정.
 	// 判断基準はリーダー（＝プレイヤー）。プレイヤーの交戦状態がパーティのモードを決める。
 	float NearestDistSq = TNumericLimits<float>::Max();
@@ -133,9 +133,17 @@ void APartyManager::TickModeDecision()
 			FVector::DistSquared(Leader->GetActorLocation(), Enemy->GetActorLocation()));
 		bAnyEnemy = true;
 	}
-	if (!bAnyEnemy) return;
 
-	// [2] 히스테리시스: 진입은 가까이, 이탈은 멀리. 사이 구간은 현상유지(깜빡임 방지).
+	// [2] 인지 적 0명 = 전투 이탈. 
+	//     인지 거리 밖으로 이탈이 아닌 전투 중 적 전멸로 인한 전투 이탈. 
+	// 知覚敵0＝戦闘離脱確定。全滅・知覚解除は距離ヒステリシスの外の条件。
+	if (!bAnyEnemy)
+	{
+		SetFormationMode(EPartyFormationMode::Follow);
+		return;
+	}
+
+	// [3] 히스테리시스: 진입은 가까이, 이탈은 멀리. 사이 구간은 현상유지(깜빡임 방지).
 	if (NearestDistSq < FMath::Square(EnterBattleDistance))
 	{
 		SetFormationMode(EPartyFormationMode::Battle);
