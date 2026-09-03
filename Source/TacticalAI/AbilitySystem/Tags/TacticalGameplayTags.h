@@ -10,6 +10,7 @@
 //
 // 계층 규칙:
 //   Ability.*   행위의 분류 (발동 차단·상호 배제의 대조 축)
+//   Event.*     AnimNotify·Gameplay Event로 Ability에 전달하는 전투 타이밍
 //   State.*     ASC가 보유하는 런타임 상태
 //   Cooldown.*  쿨다운 (쿨다운 GE가 부여, ASC가 발동 검사에서 대조)
 //   
@@ -26,6 +27,16 @@ namespace TacticalGameplayTags
 	// プレイヤー入力とAIの両方がこのタグで発動を要求する。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Attack_Basic);
 
+	// ── Event ──
+
+	// 평타 몽타주의 실제 타격 프레임. 이 이벤트를 받은 Ability가 데미지 GE를 적용한다.
+	// 通常攻撃モンタージュの実ヒットフレーム。このイベントを受けたAbilityがダメージGEを適用する。
+	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Attack_Basic_Hit);
+
+	// 평타 1타 분량의 종료 지점. 입력 유지 여부에 따라 다음 타수 재생 또는 종료를 결정한다.
+	// 通常攻撃1段分の終了地点。入力維持状態に応じて次段再生または終了を決定する。
+	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Attack_Basic_SectionEnd);
+	
 	// ── SetByCaller ──
 	
 	// Ability에서 피해 Gameplay Effect로 전달하는 피해량 키 — 평타 GA가 콤보 배율 적용 후 채운다.

@@ -14,19 +14,32 @@ namespace TacticalGameplayTags
 		"Gameplay Ability 通常攻撃");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
+	Event_Attack_Basic_Hit,
+	"Event.Attack.Basic.Hit",
+	"通常攻撃の実ヒットフレーム");
+
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
+		Event_Attack_Basic_SectionEnd,
+		"Event.Attack.Basic.SectionEnd",
+		"通常攻撃1段分の終了");
+	
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
 		Data_Damage,
 		"Data.Damage",
 		"ダメージ量 (SetByCaller)");
 	
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Attacking, 
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
+		State_Attacking, 
 		"State.Attacking",
 		"공격 동작 수행 중 / 攻撃動作の実行中");
 
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(State_Dead, 
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
+		State_Dead, 
 		"State.Dead",
 		"사망 / 死亡");
 
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Cooldown_Attack_Basic, 
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(
+		Cooldown_Attack_Basic, 
 		"Cooldown.Attack.Basic",
 		"통상 공격 쿨다운 / 通常攻撃のクールダウン");
 }
