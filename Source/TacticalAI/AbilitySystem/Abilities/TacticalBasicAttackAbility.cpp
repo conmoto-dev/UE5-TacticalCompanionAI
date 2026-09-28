@@ -16,7 +16,9 @@ UTacticalBasicAttackAbility::UTacticalBasicAttackAbility()
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
 
-	AbilityTags.AddTag(TacticalGameplayTags::Ability_Attack_Basic);
+	FGameplayTagContainer AssetTags = GetAssetTags();
+	AssetTags.AddTag(TacticalGameplayTags::Ability_Attack_Basic);
+	SetAssetTags(AssetTags);
 
 	ActivationOwnedTags.AddTag(TacticalGameplayTags::State_Attacking);
 
