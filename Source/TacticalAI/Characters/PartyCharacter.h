@@ -52,10 +52,43 @@ protected:
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+	// =======================================================
+	// Controller 변경 시 플레이어 평타 입력 정리
+	//
+	// 동료 스왑으로 이전 캐릭터가 입력 해제를 받지 못하는 경우에 대비한다.
+	// 이 캐릭터가 전달한 플레이어 평타 입력을 해제하고,
+	// 부모 클래스의 ActorInfo 갱신도 수행한다.
+	//
+	// Controller変更時のプレイヤー通常攻撃入力の解除。
+	// 仲間の切替で、切替前のキャラクターに入力解放が届かない場合に備える。
+	// このキャラクターが伝達したプレイヤーの通常攻撃入力を解除。
+	// =======================================================
+	virtual void NotifyControllerChanged() override;
+	
 	// ───── 빙의 시 플레이어 입력 핸들러 (동료가 리더일 때만 의미) ─────
 	// 憑依時のプレイヤー入力ハンドラ（仲間がリーダーの時のみ）。
 	void Move(const FInputActionValue& Value);
 	void Look(const FInputActionValue& Value);
+	
+	// =======================================================
+	// 플레이어 평타 입력
+	//
+	// 입력 시작과 해제를 Tactical ASC에 전달한다.
+	// 타수 진행·피해 적용·공격 종료 시점은 평타 Ability가 결정한다.
+	//
+	// プレイヤーの通常攻撃入力。
+	// 入力開始と解放をTactical ASCへ伝達する。
+	// 各段の進行・ダメージ適用・攻撃終了のタイミングは通常攻撃Abilityが決定する。
+	// =======================================================
+
+	// 플레이어가 평타 입력을 누르면 ASC에 입력 유지와 발동을 요청한다.
+	// プレイヤーが通常攻撃入力を押した際、ASCへ入力維持と発動を要求する。
+	void BasicAttackStarted();
+
+	// 입력 해제 또는 Controller 변경 시 플레이어의 입력 유지 상태를 해제한다.
+	// Ability를 직접 취소하지 않고, 진행 중인 타수의 종료 처리는 Ability에 맡긴다.
+	// 入力解放またはController変更時に、プレイヤーの入力維持状態を解除する。
+	void BasicAttackReleased();
 
 public:
 	// 컨트롤/UI 양쪽에서 들어오는 이동·시점·점프 입력 처리.
@@ -111,6 +144,16 @@ private:
 	UPROPERTY(EditAnywhere, Category="Input")
 	TObjectPtr<UInputAction> MouseLookAction;
 
+	// =======================================================
+	// 通常攻撃の入力設定と伝達状態
+	// =======================================================
+
+	// 플레이어 평타에 사용할 Input Action. 캐릭터 BP에서 지정한다.
+	// 실제 버튼은 Input Mapping Context에서 설정한다.
+	// プレイヤーの通常攻撃に使用するInput Action。
+	UPROPERTY(EditAnywhere, Category="Input")
+	TObjectPtr<UInputAction> BasicAttackAction;
+	
 	// ───── 진형 이동 상태 ─────
 	// AIController에 마지막 전달한 목표. threshold 기반 MoveTo 중복 억제 캐시.
 	// AIControllerに最後に渡した目標。重複MoveTo抑制用キャッシュ。

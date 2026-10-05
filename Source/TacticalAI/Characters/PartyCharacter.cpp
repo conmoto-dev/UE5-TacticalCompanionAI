@@ -15,6 +15,8 @@
 #include "AI/Components/FormationBattleComponent.h"
 #include "AI/Targeting/PartyTargetSelectorComponent.h"
 #include "Party/PartyManager.h"
+#include "AbilitySystem/TacticalAbilitySystemComponent.h"
+#include "AbilitySystem/Tags/TacticalGameplayTags.h"
 
 APartyCharacter::APartyCharacter()
 {
@@ -78,11 +80,34 @@ void APartyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APartyCharacter::Move);
 		EnhancedInput->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &APartyCharacter::Look);
 		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &APartyCharacter::Look);
+
+		// =======================================================
+		// 평타 입력 바인딩
+		//
+		// 누름 시 한 번만 요청하고, 입력 유지 중 타수 반복은 Ability가 처리한다.
+		// 입력 완료와 취소는 모두 해제 요청으로 전달한다.
+		//
+		// 通常攻撃の入力バインド。
+		// =======================================================
+		if (BasicAttackAction)
+		{
+			EnhancedInput->BindAction(
+				BasicAttackAction, ETriggerEvent::Started,
+				this, &APartyCharacter::BasicAttackStarted);
+
+			EnhancedInput->BindAction(
+				BasicAttackAction, ETriggerEvent::Completed,
+				this, &APartyCharacter::BasicAttackReleased);
+
+			EnhancedInput->BindAction(
+				BasicAttackAction, ETriggerEvent::Canceled,
+				this, &APartyCharacter::BasicAttackReleased);
+		}
 	}
 	else
 	{
 		UE_LOG(LogTacticalAI, Error,
-			TEXT("'%s' Failed to find an Enhanced Input component!"), *GetNameSafe(this));
+			TEXT("'%s' Enhanced Input Componentが見つかりません。"), *GetNameSafe(this));
 	}
 }
 
@@ -96,6 +121,93 @@ void APartyCharacter::Look(const FInputActionValue& Value)
 {
 	const FVector2D LookAxisVector = Value.Get<FVector2D>();
 	DoLook(LookAxisVector.X, LookAxisVector.Y);
+}
+
+// =======================================================
+// 플레이어 평타 시작
+//
+// ASC에 입력 유지 상태를 기록하고 평타 발동을 요청한다.
+// 발동 가능 여부와 발동 후 타수 진행은 GAS와 평타 Ability가 결정한다.
+//
+// プレイヤーの通常攻撃開始。
+// =======================================================
+void APartyCharacter::BasicAttackStarted()
+{
+	if (!IsLocallyControlled() || !IsPlayerControlled()) return;
+
+	UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent();
+	if (!ASC) return;
+
+	ASC->RequestPressAbilityFromPlayer(TacticalGameplayTags::Ability_Attack_Basic);
+}
+
+// =======================================================
+// 플레이어 평타 입력 해제
+//
+// 입력 유지 상태만 해제한다.
+// 진행 중인 타수까지 마무리한 뒤 종료하는 처리는 평타 Ability가 담당한다.
+//
+// プレイヤーの通常攻撃入力の解放。
+// =======================================================
+void APartyCharacter::BasicAttackReleased()
+{
+	UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent();
+	if (!ASC) return;
+
+	ASC->RequestReleaseAbilityFromPlayer(TacticalGameplayTags::Ability_Attack_Basic);
+}
+
+// =======================================================
+// 조작 주체 변경 시 평타 중단
+//
+// 플레이어·AI 중 누가 시작했는지와 관계없이,
+// 이전 조작 주체의 평타 입력을 해제하고 실행 중인 평타를 취소한다.
+//
+// 操作主体の変更時に通常攻撃を中断する。
+// プレイヤー・AIのどちらが開始したかに関係なく、
+// 以前の操作主体の通常攻撃入力を解除し、実行中の通常攻撃をキャンセルする。
+// =======================================================
+void APartyCharacter::NotifyControllerChanged()
+{
+	// [1] 게임 시작 전 최초 Controller 배정에서는 정리할 평타가 없으므로 건너뛴다.
+	// [1] ゲーム開始前の初回Controller割り当てでは、解除・キャンセル対象の通常攻撃がないためスキップする。
+	if (HasActorBegunPlay())
+	{
+		if (UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent())
+		{
+			// [2] 이전 Controller에 해당하는 요청 경로로 평타 입력을 해제한다.
+			// 두 경로 모두 ASC 내부의 같은 입력 유지 상태를 해제한다.
+			//
+			// [2] 以前のControllerに対応する要求経路で通常攻撃入力を解除する。
+			// どちらの経路も、ASC内部の同じ入力維持状態を解除する。
+			if (Cast<AAIController>(PreviousController))
+			{
+				ASC->RequestReleaseAbilityFromAI(
+					TacticalGameplayTags::Ability_Attack_Basic);
+			}
+			else
+			{
+				ASC->RequestReleaseAbilityFromPlayer(
+					TacticalGameplayTags::Ability_Attack_Basic);
+			}
+
+			// [3] 입력 해제만으로는 현재 타수가 계속되므로 평타 Ability도 취소한다.
+			// 평타 태그로 대상을 제한하여 다른 스킬은 취소하지 않는다.
+			//
+			// [3] 入力解除だけでは現在段が継続するため、通常攻撃Abilityもキャンセルする。
+			// 通常攻撃タグで対象を限定し、他のスキルはキャンセルしない。
+			FGameplayTagContainer BasicAttackTags;
+			BasicAttackTags.AddTag(TacticalGameplayTags::Ability_Attack_Basic);
+			ASC->CancelAbilities(&BasicAttackTags);
+		}
+	}
+
+	// [4] 이전 평타를 정리한 뒤 Controller 변경 알림과 ActorInfo 갱신을 수행한다.
+	// 부모 호출 중 변경 알림을 받은 처리가 새로 시작한 공격을 취소하지 않도록 한다.
+	//
+	// [4] 以前の通常攻撃を整理した後、Controller変更通知とActorInfo更新を実行する。
+	// 親の呼び出し中に変更通知を受けた処理が開始した攻撃をキャンセルしないようにする。
+	Super::NotifyControllerChanged();
 }
 
 void APartyCharacter::DoMove(float Right, float Forward)
