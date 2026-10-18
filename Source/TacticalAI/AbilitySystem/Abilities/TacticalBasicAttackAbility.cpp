@@ -8,6 +8,8 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
+#include "Abilities/GameplayAbilityTypes.h"
+#include "GameplayAbilitySpec.h"
 #include "GameplayEffect.h"
 #include "TacticalAI.h"
 
@@ -78,12 +80,14 @@ bool UTacticalBasicAttackAbility::CanActivateAbility(
 // =======================================================
 // 평타 실행 초기화
 //
-// 선택적으로 TargetSelector를 캐싱하고,
-// 입력 해제·타격·타수 종료 이벤트를 대기한 뒤 첫 타수를 재생한다.
+// ASC가 전달한 실행 방식을 확인하고 첫 타수를 준비한다.
+// InputBound 실행에서만 입력 해제를 기다린다.
+// 타격·타수 종료 이벤트는 두 실행 방식에서 공통으로 사용한다.
 //
 // 通常攻撃の実行初期化。
-// TargetSelectorが存在する場合はキャッシュし、
-// 入力解放・ヒット・各段終了イベントの待機後に初段を再生する。
+// ASCから受け取った実行方式を確認し、初段を準備する。
+// InputBoundでの実行時のみ入力解放を待機する。
+// ヒット・各段終了イベントは両方の実行方式で共通して使用する。
 // =======================================================
 void UTacticalBasicAttackAbility::ActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
@@ -93,35 +97,53 @@ void UTacticalBasicAttackAbility::ActivateAbility(
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
-	// [1] コスト・クールダウンを確定する。失敗した場合は発動を取り消す。
-	// [1] 코스트·쿨다운을 확정한다. 실패하면 발동을 취소한다.
+	// [1] 전달받은 실행 방식을 확인한다.
+	// 누락되거나 지원하지 않는 방식이면 코스트·쿨다운을 확정하기 전에 중단한다.
+	// [1] 受け取った実行方式を確認する。
+	// 未指定または未対応の方式なら、コスト・クールダウンの確定前に中断する。
+	if (!InitializeExecutionMode(TriggerEventData))
+	{
+		FinishAbility(true);
+		return;
+	}
+
+	// [2] 코스트·쿨다운을 확정한다. 실패하면 발동을 취소한다.
+	// [2] コスト・クールダウンを確定する。失敗した場合は発動を取り消す。
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		FinishAbility(true);
 		return;
 	}
 
-	// [2] TargetSelector가 있으면 캐싱한다. 없어도 공격은 진행한다.
-	// [2] TargetSelectorが存在する場合はキャッシュする。存在しなくても攻撃は継続する。
+	// [3] TargetSelector가 있으면 캐싱한다. 없어도 공격은 진행한다.
+	// [3] TargetSelectorが存在する場合はキャッシュする。存在しなくても攻撃は継続する。
 	AActor* AvatarActor = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 	TargetSelector = AvatarActor ? AvatarActor->FindComponentByClass<UTargetSelectorComponent>() : nullptr;
 
-	// [3] 첫 타수의 실행 상태를 초기화한다.
-	// [3] 初段の実行状態を初期化する。
+	// [4] 첫 타수의 실행 상태를 초기화한다.
+	// 실행 방식은 이미 결정되어 있으며, Spec에서는 현재 입력 상태만 읽는다.
+	// [4] 初段の実行状態を初期化する。
+	// 実行方式はすでに決定済みであり、Specからは現在の入力状態のみを読み取る。
 	CurrentStepIndex = 0;
-	bAttackInputHeld = true;
+	bAttackInputHeld = false;
 	bDamageAppliedForCurrentStep = false;
 	CurrentStepTarget.Reset();
 
-	// [4] 입력 해제와 애니메이션 Gameplay Event 수신을 준비한다.
-	// [4] 入力解放とAnimation Gameplay Eventの受信を準備する。
-	InputReleaseTask = UAbilityTask_WaitInputRelease::WaitInputRelease(this, true);
-	if (InputReleaseTask)
+	if (ExecutionMode == EExecutionMode::InputBound)
 	{
-		InputReleaseTask->OnRelease.AddDynamic(this, &UTacticalBasicAttackAbility::HandleInputReleased);
-		InputReleaseTask->ReadyForActivation();
+		const FGameplayAbilitySpec* Spec = GetCurrentAbilitySpec();
+		bAttackInputHeld = Spec && Spec->InputPressed;
 	}
 
+	// [5] InputBound 실행에서 입력 해제를 기다린다.
+	// [5] InputBoundでの実行時に入力解放を待機する。
+	if (ExecutionMode == EExecutionMode::InputBound)
+	{
+		StartInputReleaseTask();
+	}
+
+	// [6] 애니메이션 Gameplay Event 수신을 준비한다.
+	// [6] Animation Gameplay Eventの受信を準備する。
 	HitEventTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
 		this,
 		TacticalGameplayTags::Event_Attack_Basic_Hit,
@@ -148,8 +170,8 @@ void UTacticalBasicAttackAbility::ActivateAbility(
 		StepEndEventTask->ReadyForActivation();
 	}
 
-	// [5] 첫 타수의 몽타주 재생을 시작한다.
-	// [5] 初段のMontage再生を開始する。
+	// [7] 첫 타수의 몽타주 재생을 시작한다.
+	// [7] 初段のMontage再生を開始する。
 	PlayCurrentAttackStep();
 }
 
@@ -169,15 +191,108 @@ void UTacticalBasicAttackAbility::EndAbility(
 	CurrentStepTarget.Reset();
 
 	CurrentStepIndex = INDEX_NONE;
+	ExecutionMode = EExecutionMode::AutoComplete;
 	bAttackInputHeld = false;
 	bDamageAppliedForCurrentStep = false;
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }
 
+// =======================================================
+// 실행 중 추가 입력 누름
+//
+// InputBound 실행에서 입력 유지 상태를 다시 기록한다.
+// 입력 해제 후 현재 타격이 끝나기 전에 다시 누르면 공격을 이어갈 수 있다.
+// AutoComplete 실행에는 입력 누름을 반영하지 않는다.
+//
+// 発動中の追加入力押下。
+// InputBoundでの実行時に入力維持状態を再度記録する。
+// 入力解放後、現在段が終了する前に再度押すと攻撃を継続できる。
+// AutoCompleteでの実行には入力押下を反映しない。
+// =======================================================
+void UTacticalBasicAttackAbility::InputPressed(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputPressed(Handle, ActorInfo, ActivationInfo);
+
+	if (!IsActive() || ExecutionMode != EExecutionMode::InputBound)
+	{
+		return;
+	}
+
+	bAttackInputHeld = true;
+	StartInputReleaseTask();
+}
+
 AActor* UTacticalBasicAttackAbility::ResolveAttackTarget_Implementation() const
 {
 	return TargetSelector.IsValid() ? TargetSelector->GetCurrentTarget() : nullptr;
+}
+
+// =======================================================
+// 실행 방식 설정
+//
+// 발동 시 전달받은 EventTag를 평타 내부 실행 방식으로 변환한다.
+// 입력 상태나 Controller 종류로 실행 방식을 추측하지 않는다.
+//
+// 実行方式の設定。
+// 発動時に受け取ったEventTagを通常攻撃内部の実行方式へ変換する。
+// 入力状態やControllerの種類から実行方式を推測しない。
+// =======================================================
+bool UTacticalBasicAttackAbility::InitializeExecutionMode(const FGameplayEventData* TriggerEventData)
+{
+	if (!TriggerEventData)
+	{
+		UE_LOG(LogTacticalAI, Warning, TEXT("通常攻撃: 実行方式を含む発動データがありません。"));
+		return false;
+	}
+
+	const FGameplayTag& ExecutionModeTag = TriggerEventData->EventTag;
+
+	if (ExecutionModeTag == TacticalGameplayTags::Event_Ability_Activate_InputBound)
+	{
+		ExecutionMode = EExecutionMode::InputBound;
+		return true;
+	}
+
+	if (ExecutionModeTag == TacticalGameplayTags::Event_Ability_Activate_AutoComplete)
+	{
+		ExecutionMode = EExecutionMode::AutoComplete;
+		return true;
+	}
+
+	UE_LOG(LogTacticalAI, Warning, TEXT("通常攻撃: 未対応の実行方式です。Mode=%s"),
+		*ExecutionModeTag.ToString());
+	return false;
+}
+
+// =======================================================
+// 입력 해제 대기
+//
+// InputBound 실행에서 입력 해제를 기다리는 Task를 생성한다.
+// 이미 대기 중이면 기존 Task를 유지한다.
+// 해제 이벤트를 받은 Task는 종료되므로, 재입력 시 새로 생성한다.
+//
+// 入力解放の待機。
+// InputBoundでの実行時に入力解放を待機するTaskを生成する。
+// すでに待機中の場合は既存のTaskを維持する。
+// 解放イベントを受けたTaskは終了するため、再入力時に新しく生成する。
+// =======================================================
+void UTacticalBasicAttackAbility::StartInputReleaseTask()
+{
+	if (!IsActive() || ExecutionMode != EExecutionMode::InputBound || InputReleaseTask)
+	{
+		return;
+	}
+
+	InputReleaseTask = UAbilityTask_WaitInputRelease::WaitInputRelease(this, true);
+	if (InputReleaseTask)
+	{
+		InputReleaseTask->OnRelease.AddDynamic(this, &UTacticalBasicAttackAbility::HandleInputReleased);
+		InputReleaseTask->ReadyForActivation();
+	}
 }
 
 // =======================================================
@@ -188,7 +303,7 @@ AActor* UTacticalBasicAttackAbility::ResolveAttackTarget_Implementation() const
 //
 // 現在段の準備。
 // 段インデックスを検証し、対象とダメージ適用状態を更新する。
-// 対象が存在しなくても現在段のアニメーションを再生する。
+// 対象が存在しない場合も現在段のアニメーションは再生する。
 // =======================================================
 bool UTacticalBasicAttackAbility::PrepareCurrentAttackStep()
 {
@@ -307,6 +422,8 @@ void UTacticalBasicAttackAbility::ApplyCurrentStepDamage()
 
 void UTacticalBasicAttackAbility::FinishAbility(bool bWasCancelled)
 {
+	if (!IsActive()) return;
+
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, bWasCancelled);
 }
 
@@ -315,26 +432,64 @@ void UTacticalBasicAttackAbility::HandleHitEvent(FGameplayEventData Payload)
 	ApplyCurrentStepDamage();
 }
 
+// =======================================================
+// 현재 타수 종료
+//
+// InputBound는 입력 유지 여부로 공격 지속을 결정한다.
+// AutoComplete는 마지막 타수를 마쳤는지로 종료를 결정한다.
+//
+// 現在段の終了。
+// InputBoundは入力維持状態によって攻撃の継続を判断する。
+// AutoCompleteは最終段を完了したかによって終了を判断する。
+// =======================================================
 void UTacticalBasicAttackAbility::HandleStepEndEvent(FGameplayEventData Payload)
 {
-	if (!bAttackInputHeld)
-	{
-		FinishAbility(false);
-		return;
-	}
+	if (!IsActive()) return;
 
-	if (AttackSteps.IsEmpty())
+	if (!AttackSteps.IsValidIndex(CurrentStepIndex))
 	{
 		FinishAbility(true);
 		return;
 	}
 
+	switch (ExecutionMode)
+	{
+	case EExecutionMode::InputBound:
+		// 입력을 해제했다면 현재 타격을 마친 이 시점에 종료한다.
+		// 入力が解放されていれば、現在段を完了したこの時点で終了する。
+		if (!bAttackInputHeld)
+		{
+			FinishAbility(false);
+			return;
+		}
+		break;
+
+	case EExecutionMode::AutoComplete:
+		// 마지막 타격을 마쳤다면 한 사이클을 완료한 것이므로 종료한다.
+		// 最終段を完了していれば、1サイクルが完了したため終了する。
+		if (CurrentStepIndex == AttackSteps.Num() - 1)
+		{
+			FinishAbility(false);
+			return;
+		}
+		break;
+	}
+
+	// 다음 타수를 재생한다.
+	// 마지막 타수에서 첫 타수로 돌아가는 것은 입력을 유지 중인 InputBound 실행뿐이다.
+	// 次段を再生する。
+	// 最終段から初段へ戻るのは、入力維持中のInputBound実行のみ。
 	CurrentStepIndex = (CurrentStepIndex + 1) % AttackSteps.Num();
 	PlayCurrentAttackStep();
 }
 
 void UTacticalBasicAttackAbility::HandleInputReleased(float TimeHeld)
 {
+	// 해제를 받은 Task는 스스로 종료한다.
+	// 참조를 비워 이후 재입력 시 새 Task를 생성할 수 있도록 한다.
+	// 解放を受けたTaskは自身で終了する。
+	// 参照をクリアし、再入力時に新しいTaskを生成できるようにする。
+	InputReleaseTask = nullptr;
 	bAttackInputHeld = false;
 }
 

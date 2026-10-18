@@ -126,10 +126,12 @@ void APartyCharacter::Look(const FInputActionValue& Value)
 // =======================================================
 // 플레이어 평타 시작
 //
-// ASC에 입력 유지 상태를 기록하고 평타 발동을 요청한다.
+// ASC에 입력 유지 상태를 기록하고 InputBound 방식으로 평타 발동을 요청한다.
 // 발동 가능 여부와 발동 후 타수 진행은 GAS와 평타 Ability가 결정한다.
 //
 // プレイヤーの通常攻撃開始。
+// ASCに入力維持状態を記録し、InputBound方式で通常攻撃の発動を要求する。
+// 発動可否と発動後の各段の進行はGASと通常攻撃Abilityが決定する。
 // =======================================================
 void APartyCharacter::BasicAttackStarted()
 {
@@ -138,7 +140,7 @@ void APartyCharacter::BasicAttackStarted()
 	UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent();
 	if (!ASC) return;
 
-	ASC->RequestPressAbilityFromPlayer(TacticalGameplayTags::Ability_Attack_Basic);
+	ASC->RequestActivateInputBoundAbility(TacticalGameplayTags::Ability_Attack_Basic);
 }
 
 // =======================================================
@@ -154,7 +156,7 @@ void APartyCharacter::BasicAttackReleased()
 	UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent();
 	if (!ASC) return;
 
-	ASC->RequestReleaseAbilityFromPlayer(TacticalGameplayTags::Ability_Attack_Basic);
+	ASC->RequestReleaseAbilityInput(TacticalGameplayTags::Ability_Attack_Basic);
 }
 
 // =======================================================
@@ -175,21 +177,9 @@ void APartyCharacter::NotifyControllerChanged()
 	{
 		if (UTacticalAbilitySystemComponent* ASC = GetTacticalAbilitySystemComponent())
 		{
-			// [2] 이전 Controller에 해당하는 요청 경로로 평타 입력을 해제한다.
-			// 두 경로 모두 ASC 내부의 같은 입력 유지 상태를 해제한다.
-			//
-			// [2] 以前のControllerに対応する要求経路で通常攻撃入力を解除する。
-			// どちらの経路も、ASC内部の同じ入力維持状態を解除する。
-			if (Cast<AAIController>(PreviousController))
-			{
-				ASC->RequestReleaseAbilityFromAI(
-					TacticalGameplayTags::Ability_Attack_Basic);
-			}
-			else
-			{
-				ASC->RequestReleaseAbilityFromPlayer(
-					TacticalGameplayTags::Ability_Attack_Basic);
-			}
+			// [2] 이전 Controller 종류와 관계없이 평타 입력 유지 상태를 해제한다.
+			// [2] 以前のControllerの種類に関係なく、通常攻撃の入力維持状態を解除する。
+			ASC->RequestReleaseAbilityInput(TacticalGameplayTags::Ability_Attack_Basic);
 
 			// [3] 입력 해제만으로는 현재 타수가 계속되므로 평타 Ability도 취소한다.
 			// 평타 태그로 대상을 제한하여 다른 스킬은 취소하지 않는다.
