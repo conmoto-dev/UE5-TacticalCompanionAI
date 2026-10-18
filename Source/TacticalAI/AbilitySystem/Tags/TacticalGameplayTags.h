@@ -9,42 +9,69 @@
 // 공통으로 사용하는 고정 식별자를 선언한다.
 //
 // 계층 규칙:
-//   Ability.*   행위의 분류 (발동 차단·상호 배제의 대조 축)
-//   Event.*     AnimNotify·Gameplay Event로 Ability에 전달하는 전투 타이밍
+//   Ability.*   Ability 식별·분류
+//   Event.*     Ability 발동 요청·전투 타이밍 전달
+//   Data.*      SetByCaller 수치 식별
 //   State.*     ASC가 보유하는 런타임 상태
-//   Cooldown.*  쿨다운 (쿨다운 GE가 부여, ASC가 발동 검사에서 대조)
-//   
+//   Cooldown.*  쿨다운 GE가 부여하는 발동 제한 태그
+//
 // C++戦闘コードとGameplay Ability・Gameplay Effectアセットが
 // 共通で使用する固定識別子を宣言する。
+//
+// 階層規則:
+//   Ability.*   Abilityの識別・分類
+//   Event.*     Abilityの発動要求・戦闘タイミングの伝達
+//   Data.*      SetByCaller値の識別
+//   State.*     ASCが保持するランタイム状態
+//   Cooldown.*  クールダウンGEが付与する発動制限タグ
 // =======================================================
 namespace TacticalGameplayTags
 {
 	// ── Ability ──
-	
+
 	// 평타 Gameplay Ability를 식별하는 태그.
 	// 플레이어 입력과 AI 모두 이 태그로 평타 활성화를 요청한다.
 	// 通常攻撃Gameplay Abilityを識別するタグ。
 	// プレイヤー入力とAIの両方がこのタグで発動を要求する。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Attack_Basic);
 
-	// ── Event ──
+	// ── Ability Activation Event ──
+
+	// 입력 누름·해제를 사용하는 실행 방식.
+	// ASC가 발동할 Ability에 실행 방식을 함께 전달하며, 입력에 대한 반응은 Ability가 결정한다.
+	// 入力の押下・解放を使用する実行方式。
+	// ASCが発動するAbilityに実行方式を伝達し、入力への反応はAbilityが決定する。
+	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Ability_Activate_InputBound);
+
+	// 입력 해제를 기다리지 않고 Ability 자체의 완료 조건으로 종료하는 실행 방식.
+	// ASC가 발동할 Ability에 실행 방식을 전달한다.
+	// 入力解放を待たず、Ability自身の完了条件で終了する実行方式。
+	// ASCが発動するAbilityに実行方式を伝達する。
+	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Ability_Activate_AutoComplete);
+
+	// ── Basic Attack Animation Event ──
 
 	// 평타 몽타주의 실제 타격 프레임. 이 이벤트를 받은 Ability가 데미지 GE를 적용한다.
 	// 通常攻撃モンタージュの実ヒットフレーム。このイベントを受けたAbilityがダメージGEを適用する。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Attack_Basic_Hit);
 
-	// 평타 1타 분량의 종료 지점. 입력 유지 여부에 따라 다음 타수 재생 또는 종료를 결정한다.
-	// 通常攻撃1段分の終了地点。入力維持状態に応じて次段再生または終了を決定する。
+	// 평타 1타 분량의 종료 지점.
+	// Ability가 실행 방식과 입력 상태에 따라 다음 타수 재생 또는 종료를 결정한다.
+	// 通常攻撃1段分の終了地点。
+	// Abilityが実行方式と入力状態に応じて次段再生または終了を決定する。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Attack_Basic_SectionEnd);
-	
+
 	// ── SetByCaller ──
-	
-	// Ability에서 피해 Gameplay Effect로 전달하는 피해량 키 — 평타 GA가 콤보 배율 적용 후 채운다.
-	// 캐릭터 상태가 아니라 SetByCaller 수치의 식별자로 사용한다
-	// AbilityからダメージGameplay Effectへ渡すダメージ量のキー。通常攻撃GAがコンボ倍率適用後に埋める。
+
+	// Ability에서 피해 Gameplay Effect로 전달하는 피해량 키.
+	// 평타 GA가 콤보 배율 적용 후 채운다.
+	// 캐릭터 상태가 아니라 SetByCaller 수치의 식별자로 사용한다.
+	//
+	// AbilityからダメージGameplay Effectへ渡すダメージ量のキー。
+	// 通常攻撃GAがコンボ倍率適用後に埋める。
 	// キャラクター状態ではなくSetByCaller値の識別子として使用する。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Data_Damage);
-	
+
 	// ── State ──
 
 	// 공격 동작 수행 중. 평타 GA가 실행 동안 부여 — 이동 계열(미세 이동 등)의 정지 조건이자
@@ -61,5 +88,4 @@ namespace TacticalGameplayTags
 	// 평타 쿨다운. 쿨다운 GE가 지속시간 동안 부여.
 	// 通常攻撃のクールダウン。クールダウンGEが持続時間の間付与。
 	TACTICALAI_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cooldown_Attack_Basic);
-	
 }
