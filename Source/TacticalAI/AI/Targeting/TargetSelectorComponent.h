@@ -42,7 +42,32 @@ public:
 	/** 現在コミット中のターゲット。無効時はnullptr。 */
 	UFUNCTION(BlueprintCallable, Category = "Targeting")
 	AActor* GetCurrentTarget() const { return CurrentTarget.Get(); }
+	
+	// =========================================================================
+	// 일회성 방향·거리 기반 타겟 질의 (플레이어 입력 지향 공격 등)
+	//
+	// 주기적 평가(CurrentTarget)를 덮어쓰지 않고, 현재 후보군 중에서
+	// 기준 방향(WorldDirection2D) 좌우 허용 반각(MaxHalfAngleDeg) 및 최대 거리(MaxDistance) 내에 있는
+	// 후보를 탐색한다.
+	//
+	// 単発の方向・距離ベースターゲット照会（プレイヤーの入力方向攻撃など）。
+	// 周期評価（CurrentTarget）は書き換えず、現在の候補群の中から
+	// 基準方向（WorldDirection2D）の左右許容半角（MaxHalfAngleDeg）および最大距離（MaxDistance）内の
+	// 候補を探索する。
+	// =========================================================================
+	AActor* FindPlayerAttackTarget(
+		const FVector& Origin,
+		const FVector& FacingDirection2D,
+		const FVector& InputDirection2D,
+		const float MaxDistance,
+		const float MaxHalfAngleDeg) const;
 
+	// 지정한 액터가 현재 후보군에 포함되어 있고 타겟 가능 상태(ITargetable)인지 확인한다.
+	// 공격 연속 입력 중 무입력 상태에서 기존 타겟을 유지(Sticky)할 수 있는지 검증할 때 사용한다.
+	// 指定アクターが現在の候補群に含まれており、ターゲット可能状態（ITargetable）か確認する。
+	// 連続攻撃中の無入力時に既存ターゲットを維持（Sticky）できるか検証する際に使用する。
+	bool IsValidCandidate(const AActor* TargetActor) const;
+	
 protected:
 	virtual void BeginPlay() override;
 

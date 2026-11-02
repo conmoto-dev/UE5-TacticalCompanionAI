@@ -190,3 +190,129 @@ void UTargetSelectorComponent::HandleTargetDestroyed(AActor* DestroyedActor)
 	CurrentTarget = nullptr;
 	ScheduleReactionReevaluation();
 }
+
+// =======================================================
+// 플레이어 공격 대상 검색
+//
+// 방향 입력이 있으면 입력 방향을 기준으로 방향 일치도를 우선한다.
+// 방향 입력이 없으면 캐릭터 정면을 기준으로 가까운 대상을 우선한다.
+// 기존 후보 공급원을 사용하며, AI 정책 평가와 CurrentTarget은 변경하지 않는다.
+// 거리와 각도는 대상 Actor 위치의 수평 방향을 기준으로 계산한다.
+//
+// プレイヤーの攻撃対象を検索する。
+// 方向入力があれば入力方向との一致度を優先する。
+// 方向入力がなければキャラクター前方を基準に近い対象を優先する。
+// 既存の候補供給元を使い、AIのポリシー評価とCurrentTargetは変更しない。
+// 距離と角度は対象Actor位置の水平方向を基準に計算する。
+// =======================================================
+AActor* UTargetSelectorComponent::FindPlayerAttackTarget(
+	const FVector& Origin,
+	const FVector& FacingDirection2D,
+	const FVector& InputDirection2D,
+	const float MaxDistance,
+	const float MaxHalfAngleDeg) const
+{
+	// [1] 입력 유무에 따라 검색 기준 방향을 결정한다.
+	// [1] 入力の有無に応じて検索基準方向を決める。
+	const FVector InputDirection = InputDirection2D.GetSafeNormal2D();
+	const bool bHasDirectionalInput = !InputDirection.IsNearlyZero();
+	const FVector SearchDirection = bHasDirectionalInput
+		? InputDirection
+		: FacingDirection2D.GetSafeNormal2D();
+
+	if (SearchDirection.IsNearlyZero() || MaxDistance <= 0.f)
+	{
+		return nullptr;
+	}
+
+	const double HalfAngleDeg = FMath::Clamp(
+		static_cast<double>(MaxHalfAngleDeg), 0.0, 180.0);
+	const bool bCheckAngle = HalfAngleDeg < 180.0;
+	const double CosThreshold = FMath::Cos(FMath::DegreesToRadians(HalfAngleDeg));
+	const double MaxDistanceSquared = FMath::Square(static_cast<double>(MaxDistance));
+
+	AActor* BestCandidate = nullptr;
+	double BestDistanceSquared = TNumericLimits<double>::Max();
+	double BestDirectionDot = -2.0;
+
+	for (AActor* Candidate : GatherCandidates())
+	{
+		// [2] 자신을 제외하고 Actor의 유효성과 타겟 자격을 확인한다.
+		// [2] 自身を除外し、Actorの有効性とターゲット資格を確認する。
+		if (!IsValid(Candidate) || Candidate == GetOwner() ||
+			!Candidate->Implements<UTargetable>() ||
+			!ITargetable::Execute_IsTargetable(Candidate))
+		{
+			continue;
+		}
+
+		// [3] 수평 중심 거리를 검사한다. 같은 수평 위치는 방향을 정할 수 없어 제외한다.
+		// [3] 水平中心間距離を確認する。同一水平位置は方向を決められないため除外する。
+		FVector ToCandidate2D = Candidate->GetActorLocation() - Origin;
+		ToCandidate2D.Z = 0.0;
+
+		const double DistanceSquared = ToCandidate2D.SizeSquared();
+		if (DistanceSquared > MaxDistanceSquared || DistanceSquared <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		// [4] 방향 일치도를 계산하고 허용 반각 밖의 후보를 제외한다.
+		// 반각이 180도인 경우에도 방향 우선 비교를 위해 내적은 계산한다.
+		// [4] 方向一致度を計算し、許容半角外の候補を除外する。
+		// 半角が180度でも、方向優先の比較に使う内積は計算する。
+		const FVector CandidateDirection = ToCandidate2D / FMath::Sqrt(DistanceSquared);
+		const double DirectionDot = FVector::DotProduct(SearchDirection, CandidateDirection);
+
+		if (bCheckAngle && DirectionDot < CosThreshold)
+		{
+			continue;
+		}
+
+		// [5] 입력이 있으면 방향 우선, 없으면 거리 우선으로 선택한다.
+		// 주 기준이 같으면 다른 기준으로 비교하고, 둘 다 같으면 기존 후보를 유지한다.
+		// [5] 入力があれば方向優先、なければ距離優先で選択する。
+		// 主基準が同じなら他方で比較し、両方同じなら既存候補を維持する。
+		bool bBetterCandidate;
+
+		if (bHasDirectionalInput)
+		{
+			bBetterCandidate =
+				DirectionDot > BestDirectionDot ||
+				(DirectionDot == BestDirectionDot && DistanceSquared < BestDistanceSquared);
+		}
+		else
+		{
+			bBetterCandidate =
+				DistanceSquared < BestDistanceSquared ||
+				(DistanceSquared == BestDistanceSquared && DirectionDot > BestDirectionDot);
+		}
+
+		if (bBetterCandidate)
+		{
+			BestCandidate = Candidate;
+			BestDistanceSquared = DistanceSquared;
+			BestDirectionDot = DirectionDot;
+		}
+	}
+
+	return BestCandidate;
+}
+
+bool UTargetSelectorComponent::IsValidCandidate(const AActor* TargetActor) const
+{
+	if (!TargetActor || !TargetActor->Implements<UTargetable>() || !ITargetable::Execute_IsTargetable(TargetActor))
+	{
+		return false;
+	}
+
+	for (const AActor* Candidate : GatherCandidates())
+	{
+		if (Candidate == TargetActor)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}

@@ -90,10 +90,15 @@ protected:
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) override;
 
-	// 현재 타수에서 공격할 대상 조회.
-	// 기본 구현은 캐싱된 TargetSelector의 현재 타겟을 사용한다.
-	// 現在段で攻撃する対象を取得する。
-	// 基本実装はキャッシュ済みTargetSelectorの現在ターゲットを使う。
+	// =======================================================
+	// 현재 타수의 공격 대상 결정.
+	// 플레이어는 입력 방향 반영.
+	// AI는 캐싱된 TargetSelector의 현재 대상을 사용한다.
+	//
+	// 現在段の攻撃対象を決定する。
+	// プレイヤーは入力方向を反映する。
+	// AIはキャッシュ済みTargetSelectorの現在ターゲットを使用する。
+	// =======================================================
 	UFUNCTION(BlueprintNativeEvent, Category = "Basic Attack")
 	AActor* ResolveAttackTarget() const;
 	virtual AActor* ResolveAttackTarget_Implementation() const;
@@ -121,6 +126,29 @@ private:
 	// すでに待機中の場合はTaskを重複生成しない。
 	void StartInputReleaseTask();
 
+	// =======================================================
+	// 타수별 입력 조회·대상 유지·방향 정렬
+	// 입력 정보는 인터페이스로 조회하고, 평타 정책은 Ability에서 판단한다.
+	//
+	// 段ごとの入力取得・対象維持・方向整列。
+	// 入力情報はインターフェースから取得し、通常攻撃の規則はAbilityで判断する。
+	// =======================================================
+	FVector GetDesiredInputDirection2D() const;
+
+	bool CanKeepCurrentStepTarget(
+		const AActor* AvatarActor,
+		const AActor* TargetActor) const;
+
+	void UpdateCurrentStepFacing();
+	
+	// 플레이어 평타의 루트모션 이동 배율
+	// プレイヤー通常攻撃のルートモーション移動倍率。
+	float CalculateCurrentStepRootMotionScale(const FName& SectionName) const;
+
+	// 이동 배율을 기본값으로 복원한다.
+	// 移動倍率を既定値へ戻す。
+	void ResetRootMotionScale();
+	
 	bool PrepareCurrentAttackStep();
 	void PlayCurrentAttackStep();
 	void ApplyCurrentStepDamage();
@@ -166,8 +194,49 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Damage", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
-	// 현재 타수에서 사용할 타겟. 다음 타수 시작 시 다시 확정한다.
-	// 現在段で使用するターゲット。次段開始時に再取得する。
+	// =======================================================
+	// 플레이어 평타 대상 검색·방향 설정
+	// 루트모션 이동량과 실제 타격 범위는 별도로 결정한다.
+	//
+	// プレイヤー通常攻撃の対象検索・方向設定。
+	// ルートモーション移動量と実際の命中範囲は別に決定する。
+	// =======================================================
+
+	// 플레이어 평타의 대상 검색 거리. Actor 위치 사이의 수평 중심 거리 기준.
+	// プレイヤー通常攻撃の対象検索距離。Actor位置間の水平中心距離を使う。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Targeting",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
+	float TargetSearchDistance = 300.f;
+
+	// 검색 기준 방향 좌우의 허용 반각. 
+	// 検索基準方向の左右許容半角。60なら全体の検索角度は120度。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Targeting",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0"))
+	float TargetSearchHalfAngleDeg = 90.f;
+
+	// 플레이어 평타의 타수 시작 시 대상 방향으로 회전한다.
+	// 대상이 없으면 이동 입력 방향을 사용하며, 입력도 없으면 현재 방향을 유지한다.
+	// プレイヤー通常攻撃の各段開始時に対象方向へ回転する。
+	// 対象がなければ移動入力方向を使い、入力もなければ現在方向を維持する。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Targeting",
+		meta = (AllowPrivateAccess = "true"))
+	bool bFaceTargetOnStepStart = true;
+	
+	// =======================================================
+	// 공격 이동 보정 설정
+	// 対象への攻撃移動の補正設定
+	// =======================================================
+
+	// 공격자와 대상의 캡슐 표면 사이에 남길 거리.
+	// 攻撃者と対象のカプセル表面間に残す距離。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Movement",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
+	float AttackStopDistanceMargin = 10.f;
+	
+	// 현재 타수의 대상. 다음 타수 선정 시에는 이전 대상으로 참조한다.
+	// 공격 종료 시 초기화.
+	// 現在段の対象。次段の選定時には前段の対象として参照する。
+	// 攻撃終了時に初期化。
 	TWeakObjectPtr<AActor> CurrentStepTarget;
 
 	// Avatar가 소유한 TargetSelector 캐시. Ability가 소유하지 않는다.

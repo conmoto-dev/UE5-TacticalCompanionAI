@@ -11,6 +11,12 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayAbilitySpec.h"
 #include "GameplayEffect.h"
+#include "GameFramework/Pawn.h"
+#include "Animation/AnimMontage.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
+#include "Interfaces/MovementInputProvider.h"
 #include "TacticalAI.h"
 
 UTacticalBasicAttackAbility::UTacticalBasicAttackAbility()
@@ -182,6 +188,10 @@ void UTacticalBasicAttackAbility::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	// 정상 종료와 취소 모두 루트모션 이동 배율을 기본값으로 복원한다.
+	// 正常終了・キャンセルのどちらでもルートモーション移動倍率を既定値へ戻す。
+	ResetRootMotionScale();
+	
 	MontageTask = nullptr;
 	HitEventTask = nullptr;
 	StepEndEventTask = nullptr;
@@ -226,9 +236,268 @@ void UTacticalBasicAttackAbility::InputPressed(
 	StartInputReleaseTask();
 }
 
+// =======================================================
+// 현재 타수의 대상 결정
+// 플레이어의 대상 AI와 별도로 판단한다.
+//
+// 現在段の対象決定。
+// プレイヤーの対象選定はAIとは別に判断する。
+// =======================================================
 AActor* UTacticalBasicAttackAbility::ResolveAttackTarget_Implementation() const
 {
-	return TargetSelector.IsValid() ? TargetSelector->GetCurrentTarget() : nullptr;
+	if (!TargetSelector.IsValid())
+	{
+		return nullptr;
+	}
+
+	// [1] AI 조작에서는 기존 셀렉터의 확정 대상을 사용한다.
+	// [1] AI操作では既存セレクタの確定ターゲットを使用する。
+	const APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
+	if (!AvatarPawn)
+	{
+		return nullptr;
+	}
+
+	if (!AvatarPawn->IsPlayerControlled())
+	{
+		return TargetSelector->GetCurrentTarget();
+	}
+
+	// [2] 방향 입력이 없으면 이전 대상의 유지 가능 여부를 먼저 확인한다.
+	// 더 가까운 후보가 생겼는지는 비교하지 않는다.
+	// [2] 方向入力がなければ前段の対象を維持できるか先に確認する。
+	// より近い候補が現れたかは比較しない。
+	const FVector InputDirection2D = GetDesiredInputDirection2D();
+
+	if (InputDirection2D.IsNearlyZero())
+	{
+		if (AActor* PreviousTarget = CurrentStepTarget.Get())
+		{
+			if (CanKeepCurrentStepTarget(AvatarPawn, PreviousTarget))
+			{
+				return PreviousTarget;
+			}
+		}
+	}
+
+	// [3] 입력 방향 또는 캐릭터 정면을 기준으로 새 대상을 검색한다.
+	// 검색 결과가 없으면 nullptr를 반환하여 허공 공격으로 진행한다.
+	// [3] 入力方向またはキャラクター前方を基準に新しい対象を検索する。
+	// 対象がなければnullptrを返し、空振り攻撃として続行する。
+	return TargetSelector->FindPlayerAttackTarget(
+		AvatarPawn->GetActorLocation(),
+		AvatarPawn->GetActorForwardVector(),
+		InputDirection2D,
+		TargetSearchDistance,
+		TargetSearchHalfAngleDeg);
+}
+
+// =======================================================
+// 이동 입력 방향 조회.
+// 移動入力方向の取得。
+// =======================================================
+FVector UTacticalBasicAttackAbility::GetDesiredInputDirection2D() const
+{
+	const IMovementInputProvider* InputProvider =
+		Cast<IMovementInputProvider>(GetAvatarActorFromActorInfo());
+
+	return InputProvider
+		? InputProvider->GetMovementInputDirection2D()
+		: FVector::ZeroVector;
+}
+
+// =======================================================
+// 무입력 상태에서 이전 대상의 유지 가능 여부 확인
+// 方向入力がない場合の前段ターゲット維持判定。
+// =======================================================
+bool UTacticalBasicAttackAbility::CanKeepCurrentStepTarget(
+	const AActor* AvatarActor,
+	const AActor* TargetActor) const
+{
+	// [1] 대상의 현재 후보 자격을 확인한다.
+	// [1] 対象の現在の候補資格を確認する。
+	if (!AvatarActor || !TargetSelector.IsValid() ||
+		!TargetSelector->IsValidCandidate(TargetActor))
+	{
+		return false;
+	}
+
+	// [2] 신규 검색과 같은 수평 중심 거리 기준을 사용한다.
+	// [2] 新規検索と同じ水平中心距離の基準を使用する。
+	FVector ToTarget2D = TargetActor->GetActorLocation() - AvatarActor->GetActorLocation();
+	ToTarget2D.Z = 0.0;
+
+	const double DistanceSquared = ToTarget2D.SizeSquared();
+	const double MaxDistance = FMath::Max(0.0, static_cast<double>(TargetSearchDistance));
+
+	if (MaxDistance <= 0.0 || DistanceSquared > FMath::Square(MaxDistance))
+	{
+		return false;
+	}
+
+	// 이미 선정된 대상이 같은 수평 위치에 있다면 방향만으로 해제하지 않는다.
+	// 選定済みの対象が同一水平位置にいる場合、方向だけを理由に解除しない。
+	if (DistanceSquared <= KINDA_SMALL_NUMBER)
+	{
+		return true;
+	}
+
+	// [3] 캐릭터 정면 기준 허용 반각 안에 있는지 확인한다.
+	// [3] キャラクター前方を基準に許容半角内か確認する。
+	const double HalfAngleDeg = FMath::Clamp(
+		static_cast<double>(TargetSearchHalfAngleDeg), 0.0, 180.0);
+
+	if (HalfAngleDeg >= 180.0)
+	{
+		return true;
+	}
+
+	const FVector FacingDirection2D = AvatarActor->GetActorForwardVector().GetSafeNormal2D();
+	const FVector TargetDirection2D = ToTarget2D / FMath::Sqrt(DistanceSquared);
+	const double DirectionDot = FVector::DotProduct(FacingDirection2D, TargetDirection2D);
+	const double CosThreshold = FMath::Cos(FMath::DegreesToRadians(HalfAngleDeg));
+
+	return DirectionDot >= CosThreshold;
+}
+
+// =======================================================
+// 플레이어 평타의 타수 시작 방향 정렬
+// 대상이 있으면 대상 방향, 없으면 이동 입력 방향을 사용한다.
+// 타수 도중에는 이 함수에서 방향을 갱신하지 않는다.
+//
+// プレイヤー通常攻撃の各段開始時の方向整列。
+// 対象があれば対象方向、なければ移動入力方向を使用する。
+// 段の途中ではこの関数による方向更新を行わない。
+// =======================================================
+void UTacticalBasicAttackAbility::UpdateCurrentStepFacing()
+{
+	if (!bFaceTargetOnStepStart) return;
+
+	APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
+	if (!AvatarPawn || !AvatarPawn->IsPlayerControlled()) return;
+
+	// [1] 확정된 대상 또는 입력에서 공격 방향을 구한다.
+	// [1] 確定した対象または入力から攻撃方向を求める。
+	FVector AttackDirection2D = FVector::ZeroVector;
+
+	if (const AActor* TargetActor = CurrentStepTarget.Get())
+	{
+		AttackDirection2D =
+			(TargetActor->GetActorLocation() - AvatarPawn->GetActorLocation()).GetSafeNormal2D();
+	}
+	else
+	{
+		AttackDirection2D = GetDesiredInputDirection2D();
+	}
+
+	// 대상 방향도 입력 방향도 없으면 현재 회전을 유지한다.
+	// 対象方向も入力方向もなければ現在の回転を維持する。
+	if (AttackDirection2D.IsNearlyZero()) return;
+
+	// [2] 수평 회전만 변경한다.
+	// [2] 水平回転のみ変更する。
+	FRotator AttackRotation = AvatarPawn->GetActorRotation();
+	AttackRotation.Yaw = AttackDirection2D.Rotation().Yaw;
+	AvatarPawn->SetActorRotation(AttackRotation);
+}
+
+// =======================================================
+// 현재 타수의 루트모션 이동 배율 계산
+// 대상이 없거나 보정 조건을 만족하지 않으면 원본 배율을 반환한다.
+//
+// 現在段のルートモーション移動倍率を計算する。
+// 対象がない場合、または補正条件を満たさない場合は元の倍率を返す。
+// =======================================================
+float UTacticalBasicAttackAbility::CalculateCurrentStepRootMotionScale(
+	const FName& SectionName) const
+{
+	// [1] 対象方向へ整列するプレイヤー攻撃のみ補正する。
+	// [1] 대상 방향으로 정렬하는 플레이어 공격만 보정한다.
+	const ACharacter* AvatarCharacter =
+		Cast<ACharacter>(GetAvatarActorFromActorInfo());
+
+	const ACharacter* TargetCharacter =
+		Cast<ACharacter>(CurrentStepTarget.Get());
+
+	if (!AvatarCharacter || !AvatarCharacter->IsPlayerControlled() ||
+		!TargetCharacter || !bFaceTargetOnStepStart || !AttackMontage)
+	{
+		return 1.f;
+	}
+
+	const UCapsuleComponent* AvatarCapsule = AvatarCharacter->GetCapsuleComponent();
+	const UCapsuleComponent* TargetCapsule = TargetCharacter->GetCapsuleComponent();
+	const USkeletalMeshComponent* AvatarMesh = AvatarCharacter->GetMesh();
+
+	if (!AvatarCapsule || !TargetCapsule || !AvatarMesh)
+	{
+		return 1.f;
+	}
+
+	// [2] 양쪽 캡슐 반경과 여유 거리로 이동 가능한 거리를 계산한다.
+	// 이미 정지 거리 안에 있다면 뒤로 이동시키지 않고 이동량을 0으로 한다.
+	// [2] 両者のカプセル半径と余白から移動可能距離を計算する。
+	// 停止距離内なら後退させず、移動量を0にする。
+	const double CenterDistance = FVector::Dist2D(
+		AvatarCharacter->GetActorLocation(),
+		TargetCharacter->GetActorLocation());
+
+	const double StopDistance =
+		AvatarCapsule->GetScaledCapsuleRadius() +
+		TargetCapsule->GetScaledCapsuleRadius() +
+		FMath::Max(0.f, AttackStopDistanceMargin);
+
+	const double AvailableMoveDistance = FMath::Max(0.0, CenterDistance - StopDistance);
+	if (AvailableMoveDistance <= KINDA_SMALL_NUMBER)
+	{
+		return 0.f;
+	}
+
+	// [3] 현재 타수의 몽타주 섹션 구간을 확인한다.
+	// [3] 現在段のMontage Section区間を確認する。
+	const int32 SectionIndex = AttackMontage->GetSectionIndex(SectionName);
+	if (SectionIndex == INDEX_NONE)
+	{
+		return 1.f;
+	}
+
+	float StartTime = 0.f;
+	float EndTime = 0.f;
+	AttackMontage->GetSectionStartAndEndTime(SectionIndex, StartTime, EndTime);
+
+	if (EndTime <= StartTime)
+	{
+		return 1.f;
+	}
+
+	// [4] 섹션의 원본 루트모션 변위를 추출하고 메시의 월드 변환을 반영한다.
+	// 캡슐 거리와 같은 월드 단위로 비교하기 위해 메시 스케일도 반영한다.
+	// [4] Sectionの元のルートモーション変位にMeshのワールド変換を適用する。
+	// カプセル間距離と同じワールド単位で比較するため、Meshのスケールも反映する。
+	const FTransform RootMotionTransform =
+		AttackMontage->ExtractRootMotionFromTrackRange(StartTime, EndTime);
+
+	const FVector WorldTranslation = AvatarMesh->GetComponentTransform().TransformVector(
+		RootMotionTransform.GetTranslation());
+
+	const double OriginalMoveDistance = WorldTranslation.Size2D();
+	if (OriginalMoveDistance <= KINDA_SMALL_NUMBER)
+	{
+		return 1.f;
+	}
+
+	// [5] 원본 이동량 이내에서 적 앞까지 필요한 비율만 사용한다.
+	// [5] 元の移動量を上限に、対象の手前まで必要な割合だけ使用する。
+	return static_cast<float>(FMath::Clamp(
+		AvailableMoveDistance / OriginalMoveDistance, 0.0, 1.0));
+}
+
+void UTacticalBasicAttackAbility::ResetRootMotionScale()
+{
+	if (ACharacter* AvatarCharacter = Cast<ACharacter>(GetAvatarActorFromActorInfo()))
+	{
+		AvatarCharacter->SetAnimRootMotionTranslationScale(1.f);
+	}
 }
 
 // =======================================================
@@ -322,9 +591,17 @@ bool UTacticalBasicAttackAbility::PrepareCurrentAttackStep()
 	CurrentStepTarget = ResolveAttackTarget();
 	bDamageAppliedForCurrentStep = false;
 
+	// [3] 이번 타수에서 대상이 확정된 뒤 공격 방향을 적용한다.
+	// [3] 現在段の対象を確定した後、攻撃方向を適用する。
+	UpdateCurrentStepFacing();
+	
 	return true;
 }
 
+// =======================================================
+// 현재 타수 재생
+// 現在段の再生。
+// =======================================================
 void UTacticalBasicAttackAbility::PlayCurrentAttackStep()
 {
 	if (!PrepareCurrentAttackStep())
@@ -333,8 +610,14 @@ void UTacticalBasicAttackAbility::PlayCurrentAttackStep()
 		return;
 	}
 
+	// [1] 대상과 공격 방향이 확정된 상태에서 이번 타수의 이동 배율을 계산한다.
+	// [1] 対象と攻撃方向を確定した状態で、現在段の移動倍率を計算する。
 	const FTacticalBasicAttackStep& CurrentStep = AttackSteps[CurrentStepIndex];
+	const float RootMotionScale =
+		CalculateCurrentStepRootMotionScale(CurrentStep.MontageSection);
 
+	// [2] 첫 재생에서는 Task가 사용할 루트모션 이동 배율을 함께 전달한다.
+	// [2] 初回再生ではTaskが使用するルートモーション移動倍率も渡す。
 	if (!MontageTask)
 	{
 		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
@@ -343,7 +626,8 @@ void UTacticalBasicAttackAbility::PlayCurrentAttackStep()
 			AttackMontage,
 			1.0f,
 			CurrentStep.MontageSection,
-			true);
+			true,
+			RootMotionScale);
 
 		if (!MontageTask)
 		{
@@ -366,6 +650,15 @@ void UTacticalBasicAttackAbility::PlayCurrentAttackStep()
 		UE_LOG(LogTacticalAI, Warning, TEXT("通常攻撃: Source ASCがありません。"));
 		FinishAbility(true);
 		return;
+	}
+
+	// [3] 다음 타수에서는 기존 Task를 유지하므로 캐릭터의 배율을 직접 갱신한다.
+	// 허공 공격으로 전환되면 계산 결과 1.0이 적용된다.
+	// [3] 次段では既存Taskを維持するため、Characterの倍率を直接更新する。
+	// 空振り攻撃へ切り替わった場合は計算結果の1.0が適用される。
+	if (ACharacter* AvatarCharacter = Cast<ACharacter>(GetAvatarActorFromActorInfo()))
+	{
+		AvatarCharacter->SetAnimRootMotionTranslationScale(RootMotionScale);
 	}
 
 	SourceASC->CurrentMontageJumpToSection(CurrentStep.MontageSection);

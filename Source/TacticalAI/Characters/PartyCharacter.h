@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "Characters/TacticalCharacterBase.h"
 #include "AI/Interfaces/HomeSlotProvider.h"
+#include "Interfaces/MovementInputProvider.h"
 #include "PartyCharacter.generated.h"
 
 class USpringArmComponent;
@@ -28,7 +29,7 @@ class UCombatMicroMovementComponent;
  * リーダー交代で憑依されるためカメラ・入力を保有 — ここが敵との分岐点。
  */
 UCLASS()
-class TACTICALAI_API APartyCharacter : public ATacticalCharacterBase, public IHomeSlotProvider
+class TACTICALAI_API APartyCharacter : public ATacticalCharacterBase, public IHomeSlotProvider, public IMovementInputProvider
 {
 	GENERATED_BODY()
 
@@ -68,6 +69,8 @@ protected:
 	// ───── 빙의 시 플레이어 입력 핸들러 (동료가 리더일 때만 의미) ─────
 	// 憑依時のプレイヤー入力ハンドラ（仲間がリーダーの時のみ）。
 	void Move(const FInputActionValue& Value);
+	// 移動入力の完了・キャンセル時に、保持している方向入力を初期化する。
+	void MoveReleased();
 	void Look(const FInputActionValue& Value);
 	
 	// =======================================================
@@ -95,7 +98,12 @@ public:
 	// コントロール/UI両方から来る移動・視点・ジャンプ入力を処理。
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoMove(float Right, float Forward);
-
+	
+	// 現在の移動入力方向の取得。
+	// 保持した左右・前後入力を現在のController Yawで変換する。
+	// ローカルプレイヤーの入力がなければZeroVectorを返す。
+	virtual FVector GetMovementInputDirection2D() const override;
+	
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoLook(float Yaw, float Pitch);
 
@@ -144,6 +152,16 @@ private:
 	UPROPERTY(EditAnywhere, Category="Input")
 	TObjectPtr<UInputAction> MouseLookAction;
 
+	// =======================================================
+	// 현재 이동 입력 상태
+	// 카메라 회전을 조회 시점에 반영하기 위해 월드 방향으로 저장하지 않는다.
+	//
+	// 現在の移動入力状態。
+	// X: 左右入力、Y: 前後入力。
+	// 取得時のカメラ回転を反映するため、ワールド方向では保持しない。
+	// =======================================================
+	FVector2D MovementInputAxis = FVector2D::ZeroVector;
+	
 	// =======================================================
 	// 通常攻撃の入力設定と伝達状態
 	// =======================================================

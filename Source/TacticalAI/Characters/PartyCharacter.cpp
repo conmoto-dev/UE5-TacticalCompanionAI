@@ -78,6 +78,9 @@ void APartyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComp
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 
 		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APartyCharacter::Move);
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Completed, this, &APartyCharacter::MoveReleased);
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Canceled, this, &APartyCharacter::MoveReleased);
+		
 		EnhancedInput->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &APartyCharacter::Look);
 		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &APartyCharacter::Look);
 
@@ -115,6 +118,11 @@ void APartyCharacter::Move(const FInputActionValue& Value)
 {
 	const FVector2D MovementVector = Value.Get<FVector2D>();
 	DoMove(MovementVector.X, MovementVector.Y);
+}
+
+void APartyCharacter::MoveReleased()
+{
+	MovementInputAxis = FVector2D::ZeroVector;
 }
 
 void APartyCharacter::Look(const FInputActionValue& Value)
@@ -171,6 +179,10 @@ void APartyCharacter::BasicAttackReleased()
 // =======================================================
 void APartyCharacter::NotifyControllerChanged()
 {
+	// 이전 Controller의 방향 입력이 남지 않도록 먼저 초기화한다.
+	// 以前のControllerの方向入力が残らないよう、先に初期化する。
+	MovementInputAxis = FVector2D::ZeroVector;
+	
 	// [1] 게임 시작 전 최초 Controller 배정에서는 정리할 평타가 없으므로 건너뛴다.
 	// [1] ゲーム開始前の初回Controller割り当てでは、解除・キャンセル対象の通常攻撃がないためスキップする。
 	if (HasActorBegunPlay())
@@ -200,12 +212,23 @@ void APartyCharacter::NotifyControllerChanged()
 	Super::NotifyControllerChanged();
 }
 
+// =======================================================
+// 이동 입력 보관 및 이동 요청
+// 컨트롤 입력과 UI 입력을 같은 경로에서 처리한다.
+//
+// 移動入力の保持と移動要求。
+// コントロール入力とUI入力を同じ経路で処理する。
+// =======================================================
 void APartyCharacter::DoMove(float Right, float Forward)
 {
+	// [1] 현재 방향 입력을 보관한다. 실제 이동 여부와 별도로 관리한다.
+	// [1] 現在の方向入力を保持する。実際の移動有無とは別に管理する。
+	MovementInputAxis = FVector2D(Right, Forward);
+
 	if (GetController() == nullptr) return;
 
-	// 컨트롤러 yaw 기준으로 전/우 방향을 산출해 이동 입력.
-	// コントローラーyaw基準で前/右方向を算出し移動入力。
+	// [2] Controller Yaw 기준으로 전방·우측 방향을 구해 이동을 요청한다.
+	// [2] Controller Yawから前方・右方向を求め、移動を要求する。
 	const FRotator Rotation = GetController()->GetControlRotation();
 	const FRotator YawRotation(0, Rotation.Yaw, 0);
 
@@ -214,6 +237,39 @@ void APartyCharacter::DoMove(float Right, float Forward)
 
 	AddMovementInput(ForwardDirection, Forward);
 	AddMovementInput(RightDirection, Right);
+}
+
+// =======================================================
+// 현재 이동 입력의 월드 방향 조회
+// 입력 방향만 제공하며, 실제 이동 속도나 이전 프레임의 이동 입력은 사용하지 않는다.
+//
+// 現在の移動入力のワールド方向を取得する。
+// 入力方向のみ提供し、実際の移動速度や前フレームの移動入力は使用しない。
+// =======================================================
+FVector APartyCharacter::GetMovementInputDirection2D() const
+{
+	// [1] 로컬 플레이어가 조작하지 않거나 방향 입력이 없으면 무입력으로 처리한다.
+	// [1] ローカルプレイヤーの操作でない場合、または方向入力がなければ入力なしとする。
+	if (!IsLocallyControlled() || !IsPlayerControlled() || MovementInputAxis.IsNearlyZero())
+	{
+		return FVector::ZeroVector;
+	}
+
+	const AController* CurrentController = GetController();
+	if (!CurrentController) return FVector::ZeroVector;
+
+	// [2] 조회 시점의 Controller Yaw를 사용하여 카메라 기준 방향을 구한다.
+	// [2] 取得時のController Yawを使い、カメラ基準の方向を求める。
+	const FRotator YawRotation(0.f, CurrentController->GetControlRotation().Yaw, 0.f);
+	const FRotationMatrix YawMatrix(YawRotation);
+
+	const FVector ForwardDirection = YawMatrix.GetUnitAxis(EAxis::X);
+	const FVector RightDirection = YawMatrix.GetUnitAxis(EAxis::Y);
+
+	// [3] 입력 크기와 무관하게 수평 단위 방향을 반환한다.
+	// [3] 入力の大きさにかかわらず、水平方向の単位ベクトルを返す。
+	return (ForwardDirection * MovementInputAxis.Y
+		+ RightDirection * MovementInputAxis.X).GetSafeNormal2D();
 }
 
 void APartyCharacter::DoLook(float Yaw, float Pitch)
