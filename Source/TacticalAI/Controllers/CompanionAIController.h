@@ -5,6 +5,8 @@
 #include "Interfaces/TacticalAvoidanceController.h"
 #include "CompanionAIController.generated.h"
 
+class UStateTreeAIComponent;
+
 /**
  * 
  */
@@ -21,5 +23,23 @@ public:
 	virtual void SetAvoidanceRole(ECrowdAvoidanceRole CrowdRole) override;
 
 protected:
+	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	
+private:
+	// =======================================================
+	// StateTree 실행 관리
+	// 최초 시작과 재빙의에서 같은 시작 조건을 사용한다.
+	//
+	// StateTreeの実行管理。
+	// =======================================================
+
+	void TryStartStateTree();
+
+	// Controller가 소유하는 StateTree 실행 컴포넌트.
+	// Controllerが所有するStateTree実行コンポーネント。
+	UPROPERTY(VisibleAnywhere, Category = "AI|StateTree")
+	TObjectPtr<UStateTreeAIComponent> StateTreeComponent;
 };
