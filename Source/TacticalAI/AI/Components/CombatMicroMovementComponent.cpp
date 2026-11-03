@@ -9,11 +9,11 @@
 #include "Characters/PartyCharacter.h"
 #include "DrawDebugHelpers.h"
 
-// 미세 이동 디버그 표시. 홈 슬롯 반경(원) / 이동 방향(화살표) / 대기 시간.
-// 微細移動デバッグ表示。ホームスロット半径／移動目標／待機・停止状態。
+// 미세 이동 디버그 표시. 홈 슬롯 반경 / 이동 방향 / 개별 이동 실행 상태.
+// 微細移動デバッグ表示。ホームスロット半径／移動方向／個別移動の実行状態。
 static TAutoConsoleVariable<bool> CVarDebugMicroMovement(
 	TEXT("TacticalAI.DebugMicroMovement"), false,
-	TEXT("Show combat micro movement debug: home slot radius, strafe goal, state."));
+	TEXT("Show combat micro movement debug: home slot radius, strafe direction, execution state."));
 
 UCombatMicroMovementComponent::UCombatMicroMovementComponent()
 {
@@ -25,10 +25,9 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// [1] 동작 조건 검사. 실패 시 이동·주시 모두 해제 — MoveTo(재배치 등)와 공격이 항상 우선.
-	//     통과/이탈 경계가 곧 "전투 대기 거동(주시+미세 이동)"의 시작/끝.
-	// [1] 動作条件検査。失敗時は移動・注視とも解除。通過/離脱の境界が戦闘待機挙動の開始/終了。
-	FVector HomeSlot;
+	// [1] 동작 조건을 잃으면 이동과 주시를 중단한다.
+	// [1] 動作条件を失った場合は移動と注視を中断する。
+	FVector HomeSlot = FVector::ZeroVector;
 	const AActor* Target = nullptr;
 	const bool bActive = PassesActivationChecks(HomeSlot, Target);
 
@@ -41,20 +40,16 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 	if (!bActive)
 	{
-		if (bCombatFacing)
-		{
-			bStrafing = false;
-			EndCombatFacing();
-		}
+		CancelStrafe();
+		EndCombatFacing();
 		return;
 	}
 
 	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return;
 
-	// [2] 타겟 주시 — 이동 여부와 무관하게 검사 통과 중엔 상시. 도착 직후 엉뚱한 방향으로
-	//     서 있던 것이 여기서 해소된다 (MoveTo 종료 → Idle → 즉시 주시 보간 시작).
-	// [2] ターゲット注視 — 移動の有無に関わらず検査通過中は常時。到着直後の向き放置をここで解消。
+	// [2] 이동 여부와 관계없이 조건을 만족하는 동안 대상을 주시한다.
+	// [2] 移動の有無に関わらず、条件を満たす間は対象を注視する。
 	if (!bCombatFacing)
 	{
 		BeginCombatFacing();
@@ -70,44 +65,95 @@ void UCombatMicroMovementComponent::TickComponent(float DeltaTime, ELevelTick Ti
 		OwnerCharacter->SetActorRotation(NewRotation);
 	}
 
-	// [3] 대기 중: 타이머 소진 후 방향·지속시간 확정하고 이동 시작.
-	// [3] 待機中：タイマー消化後、方向と持続時間を確定して移動開始。
-	if (!bStrafing)
-	{
-		TimeUntilNextStrafe -= DeltaTime;
-		if (TimeUntilNextStrafe > 0.f) return;
+	// [3] 외부에서 요청한 개별 이동만 실행한다.
+	// [3] 外部から要求された個別移動のみ実行する。
+	if (StrafeState != ECombatStrafeState::Running) return;
 
-		TimeUntilNextStrafe = FMath::FRandRange(
-			FMath::Min(StrafeIntervalRange.X, StrafeIntervalRange.Y),
-			FMath::Max(StrafeIntervalRange.X, StrafeIntervalRange.Y));
-
-		if (!TryPickStrafeDirection(HomeSlot, *Target, StrafeDirection)) return;
-
-		// 슬롯 위치가 조금만 변경될 때 갱신을 건너뛰는 것을 생략하기 위한 캐시 무효화.
-		// 位置がずれると移動命令キャッシュで次の再配置命令がスキップされうる → 既存規約通り無効化。
-		if (APartyCharacter* PartyChar = Cast<APartyCharacter>(OwnerCharacter))
-		{
-			PartyChar->InvalidateMoveCache();
-		}
-
-		StrafeTimeRemaining = FMath::FRandRange(
-			FMath::Min(StrafeDurationRange.X, StrafeDurationRange.Y),
-			FMath::Max(StrafeDurationRange.X, StrafeDurationRange.Y));
-		bStrafing = true;
-		return;
-	}
-
-	// [4] 이동 실행: 확정된 방향으로 지속시간 동안 걷는다. 중간에 자르지 않음 —
-	//     반경 밖으로 나가도 완주하고, 되돌리기는 다음 이동의 방향 규칙이 담당한다.
-	// [4] 移動実行：確定方向へ持続時間だけ歩く。途中で切らない。
 	StrafeTimeRemaining -= DeltaTime;
 	if (StrafeTimeRemaining <= 0.f)
 	{
-		bStrafing = false;
+		FinishStrafe(true);
 		return;
 	}
 
 	OwnerCharacter->AddMovementInput(StrafeDirection, StrafeSpeedScale);
+}
+
+// =======================================================
+// 횡이동 한 번 시작
+// 실행 중인 이동은 교체하지 않는다.
+// 방향과 지속시간은 요청이 성공할 때 확정한다.
+//
+// 一回の横移動を開始する。
+// 実行中の移動は置き換えない。
+// 方向と持続時間は要求成功時に確定する。
+// =======================================================
+bool UCombatMicroMovementComponent::StartStrafe()
+{
+	// [1] 중복 요청과 동작 조건을 검사한다.
+	// [1] 重複要求と動作条件を検証する。
+	if (StrafeState == ECombatStrafeState::Running) return false;
+
+	FVector HomeSlot = FVector::ZeroVector;
+	const AActor* Target = nullptr;
+	if (!PassesActivationChecks(HomeSlot, Target)) return false;
+
+	// [2] 현재 홈 슬롯과 대상을 기준으로 이동 방향을 선정한다.
+	// [2] 現在のホームスロットと対象を基準に移動方向を選択する。
+	FVector NewDirection = FVector::ZeroVector;
+	if (!TryPickStrafeDirection(HomeSlot, *Target, NewDirection)) return false;
+
+	StrafeDirection = NewDirection;
+	StrafeTimeRemaining = FMath::FRandRange(
+		FMath::Min(StrafeDurationRange.X, StrafeDurationRange.Y),
+		FMath::Max(StrafeDurationRange.X, StrafeDurationRange.Y));
+	StrafeState = ECombatStrafeState::Running;
+
+	// [3] 次の再配置が以前の移動命令キャッシュによって省略されないようにする。
+	// [3] 다음 재배치가 이전 이동 명령 캐시 때문에 생략되지 않도록 한다.
+	if (APartyCharacter* PartyChar = Cast<APartyCharacter>(GetOwner()))
+	{
+		PartyChar->InvalidateMoveCache();
+	}
+
+	return true;
+}
+
+void UCombatMicroMovementComponent::CancelStrafe()
+{
+	if (StrafeState != ECombatStrafeState::Running) return;
+
+	FinishStrafe(false);
+}
+
+// =======================================================
+// 개별 횡이동 종료
+// 이동 입력 제공을 끝내고 결과를 보관한다.
+// 주시 조건이 유지되면 이동 종료 후에도 대상을 바라본다.
+//
+// 個別の横移動を終了する。
+// 移動入力の供給を終了し、結果を保持する。
+// 注視条件が維持されていれば、移動終了後も対象を向く。
+// =======================================================
+void UCombatMicroMovementComponent::FinishStrafe(bool bCompleted)
+{
+	StrafeState = bCompleted
+		? ECombatStrafeState::Completed
+		: ECombatStrafeState::Interrupted;
+
+	StrafeDirection = FVector::ZeroVector;
+	StrafeTimeRemaining = 0.f;
+}
+
+void UCombatMicroMovementComponent::SetSuppressed(bool bInSuppressed)
+{
+	bSuppressed = bInSuppressed;
+
+	if (bSuppressed)
+	{
+		CancelStrafe();
+		EndCombatFacing();
+	}
 }
 
 bool UCombatMicroMovementComponent::PassesActivationChecks(FVector& OutHomeSlot, const AActor*& OutTarget) const
@@ -178,9 +224,10 @@ bool UCombatMicroMovementComponent::TryPickStrafeDirection(const FVector& HomeSl
 		return true;
 	}
 
-	// [2] 반경 안 = 자유 이동: 적 방향 0도 기준, 크기 50~100도 랜덤 × 좌/우 랜덤.
-	//     하한이 적 정면 직진(타겟을 뚫는 방향)을 제외한다.
-	// [2] 半径内＝自由移動。下限が敵正面への直進を除外する。
+	// [2] 반경 안 = 자유 이동: 적 방향 0도 기준, 설정된 각도 범위에서 좌우 방향을 선정한다.
+	//     하한은 적 정면으로 직진하는 방향을 제외한다.
+	// [2] 半径内＝自由移動。敵方向を0度とし、設定された角度範囲から左右の方向を選択する。
+	//     下限は敵正面へ直進する方向を除外する。
 	const float AngleDeg = FMath::FRandRange(FreeMoveAngleMinDeg, FreeMoveAngleMaxDeg)
 		* (FMath::RandBool() ? 1.f : -1.f);
 	OutDirection = ToTarget.RotateAngleAxis(AngleDeg, FVector::UpVector);
@@ -205,28 +252,28 @@ void UCombatMicroMovementComponent::BeginCombatFacing()
 
 void UCombatMicroMovementComponent::EndCombatFacing()
 {
-	ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
-	if (!OwnerCharacter) return;
+	if (!bCombatFacing) return;
 
-	UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement();
-	if (!MoveComp) return;
-	
-	MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
-	
+	if (ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner()))
+	{
+		if (UCharacterMovementComponent* MoveComp = OwnerCharacter->GetCharacterMovement())
+		{
+			MoveComp->bOrientRotationToMovement = bSavedOrientRotationToMovement;
+		}
+	}
+
 	bCombatFacing = false;
 }
 
 void UCombatMicroMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// 이동 도중 파괴/제거 대비 — 회전 방식 원상 복구.
-	// 移動中の破棄に備え、回転方式を復元。
-	if (bCombatFacing)
-	{
-		EndCombatFacing();
-	}
+	// 실행 중인 이동을 중단하고 회전 설정을 복원한다.
+	// 実行中の移動を中断し、回転設定を復元する。
+	CancelStrafe();
+	EndCombatFacing();
+
 	Super::EndPlay(EndPlayReason);
 }
-
 
 #if ENABLE_DRAW_DEBUG
 void UCombatMicroMovementComponent::DrawDebug(bool bActive, const FVector& HomeSlot) const
@@ -246,10 +293,10 @@ void UCombatMicroMovementComponent::DrawDebug(bool bActive, const FVector& HomeS
 		DrawDebugSphere(World, HomeSlot, 12.f, 8, FColor::White, false, -1.f, 0, 1.5f);
 	}
 
-	// [2] 이동 중: 이동 방향 화살표 (남은 시간 비례 길이). 대기 중: 머리 위 남은 대기 시간.
-	// [2] 移動中：移動方向の矢印。待機中：頭上に残り待機時間。
+	// [2] 이동 중에는 방향을, 그 외에는 최근 개별 이동의 실행 상태를 표시한다.
+	// [2] 移動中は方向を、それ以外は直近の個別移動の実行状態を表示する。
 	const FVector MyLoc = OwnerCharacter->GetActorLocation();
-	if (bStrafing)
+	if (StrafeState == ECombatStrafeState::Running)
 	{
 		DrawDebugDirectionalArrow(World, MyLoc,
 			MyLoc + StrafeDirection * (100.f + StrafeTimeRemaining * 60.f),
@@ -258,7 +305,7 @@ void UCombatMicroMovementComponent::DrawDebug(bool bActive, const FVector& HomeS
 	else if (bActive)
 	{
 		DrawDebugString(World, MyLoc + FVector(0, 0, 120.f),
-			FString::Printf(TEXT("next strafe %.1fs"), FMath::Max(TimeUntilNextStrafe, 0.f)),
+			UEnum::GetValueAsString(StrafeState),
 			nullptr, FColor::Cyan, 0.f, true);
 	}
 }

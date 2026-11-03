@@ -141,8 +141,8 @@ private:
 
 	void UpdateCurrentStepFacing();
 	
-	// 플레이어 평타의 루트모션 이동 배율
-	// プレイヤー通常攻撃のルートモーション移動倍率。
+	// 대상까지의 거리에 따른 평타 루트모션 이동 배율.
+	// 対象までの距離に応じた通常攻撃のルートモーション移動倍率。
 	float CalculateCurrentStepRootMotionScale(const FName& SectionName) const;
 
 	// 이동 배율을 기본값으로 복원한다.
@@ -151,6 +151,9 @@ private:
 	
 	bool PrepareCurrentAttackStep();
 	void PlayCurrentAttackStep();
+	// 타격 시점의 명중 가능 여부
+	// ヒット時点の命中可否。
+	bool CanHitCurrentStepTarget() const;
 	void ApplyCurrentStepDamage();
 	void FinishAbility(bool bWasCancelled);
 
@@ -214,7 +217,7 @@ private:
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0"))
 	float TargetSearchHalfAngleDeg = 90.f;
 
-	// 플레이어 평타의 타수 시작 시 대상 방향으로 회전한다.
+	// 평타의 타수 시작 시 대상 방향으로 회전한다.
 	// 대상이 없으면 이동 입력 방향을 사용하며, 입력도 없으면 현재 방향을 유지한다.
 	// プレイヤー通常攻撃の各段開始時に対象方向へ回転する。
 	// 対象がなければ移動入力方向を使い、入力もなければ現在方向を維持する。
@@ -232,6 +235,34 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Movement",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
 	float AttackStopDistanceMargin = 10.f;
+	
+	// =======================================================
+	// 타격 판정 설정
+	// 플레이어와 AI가 공통으로 사용한다.
+	//
+	// 命中判定設定。
+	// プレイヤーとAIで共通使用する。
+	// =======================================================
+
+	// 명중을 허용하는 수평 거리. 양쪽 캡슐 반경을 제외한 표면 간격 기준.
+	// 命中を許可する水平距離。両者のカプセル半径を除いた表面間距離を使う。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Hit",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
+	float HitRange = 100.f;
+
+	// 타격 순간 캐릭터 정면을 기준으로 하는 명중 허용 반각.
+	// ヒット時点のキャラクター前方を基準とする命中許容半角。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Hit",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "180.0"))
+	float HitHalfAngleDeg = 90.f;
+
+	// 명중을 허용하는 Actor 중심 간 높이 차이.
+	// 수평 위치만 가까운 다른 높이의 대상을 타격하지 않도록 제한한다.
+	// 命中を許可するActor中心間の高低差。
+	// 水平位置だけが近い、異なる高さの対象への命中を制限する。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Hit",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
+	float MaxHitHeightDifference = 120.f;
 	
 	// 현재 타수의 대상. 다음 타수 선정 시에는 이전 대상으로 참조한다.
 	// 공격 종료 시 초기화.

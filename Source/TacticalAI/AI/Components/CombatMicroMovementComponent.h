@@ -7,13 +7,33 @@
 class UTargetSelectorComponent;
 class ACharacter;
 
-// =========================================================================
-// 슬롯 근처 미세 이동(전투, 탐색 등). 이동 목표는 항상 홈 슬롯 반경(HomeTolerance) 안.
-// 읽기 전용 소비자: 홈 슬롯(IHomeSlotProvider)·타겟(셀렉터)을 읽기만 한다.
-// 이동은 AddMovementInput — MoveTo(재배치·추종·트래버설)가 진행 중이면 무조건 양보한다.
-// =========================================================================
-// 戦闘中の微細移動。ホームスロット半径内で、攻撃の合間にターゲットを見たまま小さく動く。
-// 読み取り専用消費者。MoveTo進行中は無条件で譲る。
+// =======================================================
+// 횡이동 한 번의 실행 상태
+// 결과는 다음 횡이동이 시작될 때까지 유지한다.
+//
+// 一回の横移動の実行状態。
+// 結果は次の横移動が開始されるまで保持する。
+// =======================================================
+UENUM(BlueprintType)
+enum class ECombatStrafeState : uint8
+{
+	Idle,
+	Running,
+	Completed,
+	Interrupted
+};
+
+// =======================================================
+// 홈 슬롯 주변의 전투 미세 이동
+// 외부 요청마다 방향과 지속시간을 정하여 한 번 이동한다.
+// 홈 슬롯과 대상을 참조하며, MoveTo 진행 중에는 이동과 주시를 중단한다.
+// 홈 슬롯 반경은 방향 선정 기준이며 이동 범위를 제한하지 않는다.
+//
+// ホームスロット周辺の戦闘微細移動。
+// 外部要求ごとに方向と持続時間を決め、一回移動する。
+// ホームスロットと対象を参照し、MoveTo中は移動と注視を中断する。
+// ホームスロット半径は方向選択の基準であり、移動範囲を制限しない。
+// =======================================================
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UCombatMicroMovementComponent : public UActorComponent
 {
@@ -26,28 +46,44 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	// 외부(어빌리티 등)의 일시 정지 스위치. 공격 시작 시 true, 종료 시 false.
-	// GAS 도입 전까지의 최소 연결 지점 — 어빌리티가 생기면 발동/종료에서 이걸 토글한다.
-	// 外部からの一時停止スイッチ。攻撃開始でtrue、終了でfalse。
+	// =======================================================
+	// 횡이동 실행 요청·취소·결과 조회
+	// 한 번에 하나의 요청만 실행한다.
+	//
+	// 横移動の実行要求・キャンセル・結果取得。
+	// 同時に実行する要求は一つに限定する。
+	// =======================================================
+
+	// 횡이동을 한 번 시작한다. 실행 중이거나 시작 조건을 만족하지 않으면 false.
+	// 一回の横移動を開始する。実行中、または開始条件を満たさない場合はfalse。
 	UFUNCTION(BlueprintCallable, Category = "MicroMovement")
-	void SetSuppressed(bool bInSuppressed) { bSuppressed = bInSuppressed; }
+	bool StartStrafe();
+
+	// 실행 중인 이동을 중단한다. 종료된 결과와 조건이 유효한 대상 주시는 유지한다.
+	// 実行中の移動を中断する。終了済みの結果と、条件が有効な対象注視は維持する。
+	UFUNCTION(BlueprintCallable, Category = "MicroMovement")
+	void CancelStrafe();
+
+	// 최근 횡이동의 실행 상태.
+	// 直近の横移動の実行状態。
+	UFUNCTION(BlueprintPure, Category = "MicroMovement")
+	ECombatStrafeState GetStrafeState() const { return StrafeState; }
+
+	// 외부 일시 정지. true이면 횡이동과 대상 주시를 즉시 중단한다.
+	// 外部からの一時停止。trueなら横移動と対象注視を即座に中断する。
+	UFUNCTION(BlueprintCallable, Category = "MicroMovement")
+	void SetSuppressed(bool bInSuppressed);
 
 protected:
 	// ───── 미세 이동 튜닝 ─────
-
-	// 이동과 이동 사이의 대기 시간 범위(초). 매번 이 안에서 랜덤 — 멤버 전원이 같은 박자로 움직이는 것 방지.
-	// 移動間の待機時間範囲(秒)。毎回ランダム — 全員が同じ拍子で動くのを防ぐ。
-	UPROPERTY(EditAnywhere, Category = "MicroMovement|Strafe", meta = (ClampMin = "0.1", Units = "s"))
-	FVector2D StrafeIntervalRange = FVector2D(1.5f, 3.5f);
 
 	// 이동 속도 배율 (캐릭터 최고 속도 대비). 전투 중 위치 조정이므로 낮게.
 	// 移動速度倍率（キャラ最高速度比）。戦闘中の位置調整なので低め。
 	UPROPERTY(EditAnywhere, Category = "MicroMovement|Strafe", meta = (ClampMin = "0.05", ClampMax = "1.0"))
 	float StrafeSpeedScale = 0.25f;
 	
-	// 한 번의 이동 지속 시간 범위(초). 이 시간은 반드시 완주 — 이동을 중간에 자르지 않는다.
-	// 최소 이동량 = 속도 × 하한. 짧은 잔걸음이 구조적으로 안 나온다.
-	// 一回の移動持続時間(秒)。必ず完走 — 途中で切らない。最小移動量＝速度×下限。
+	// 한 번의 이동 지속시간 범위. 외부 취소나 동작 조건 상실 시에는 도중에 중단한다.
+	// 一回の移動持続時間の範囲。外部キャンセルや動作条件の喪失時は途中で中断する。
 	UPROPERTY(EditAnywhere, Category = "MicroMovement|Strafe", meta = (ClampMin = "0.5", Units = "s"))
 	FVector2D StrafeDurationRange = FVector2D(2.f, 3.f);
 	
@@ -75,6 +111,10 @@ private:
 	// 移動方向の決定。半径内＝敵基準ランダム、半径外＝ホームスロット方向（復帰）。
 	bool TryPickStrafeDirection(const FVector& HomeSlot, const AActor& Target, FVector& OutDirection) const;
 	
+	// 이동 입력 제공을 끝내고 결과를 기록한다. 대상 주시는 별도로 관리한다.
+	// 移動入力の供給を終了し、結果を記録する。対象注視は別途管理する。
+	void FinishStrafe(bool bCompleted);
+	
 #if ENABLE_DRAW_DEBUG
 	// 디버그 표시 (CVar: TacticalAI.DebugMicroMovement). 반경·이동 목표·상태.
 	// デバッグ表示。半径・移動目標・状態。
@@ -85,9 +125,13 @@ private:
 	// 移動開始/終了時の回転方式切替。
 	void BeginCombatFacing();
 	void EndCombatFacing();
+	
+	// 개별 횡이동 실행 상태
+	// 종료 결과는 다음 이동이 시작될 때까지 유지한다.
+	// 個別の横移動実行状態。
+	// 終了結果は次の移動が開始されるまで保持する。
+	ECombatStrafeState StrafeState = ECombatStrafeState::Idle;
 
-	// 현재 이동 목표를 향해 이동 중인가.
-	bool bStrafing = false;
 	bool bCombatFacing = false;
 	
 	// 외부 일시 정지 상태 (공격 중 등).
@@ -98,10 +142,10 @@ private:
 	static constexpr float FreeMoveAngleMinDeg = 50.f;
 	static constexpr float FreeMoveAngleMaxDeg = 120.f;
 	
-	// 현재 이동 방향(월드, 이동 시작 시 확정) / 남은 이동 시간 / 다음 이동까지 대기 시간.
+	// 현재 이동 방향(월드 좌표, 이동 시작 시 확정)과 남은 이동 시간.
+	// 現在の移動方向（ワールド座標、移動開始時に確定）と残り移動時間。
 	FVector StrafeDirection = FVector::ZeroVector;
 	float StrafeTimeRemaining = 0.f;
-	float TimeUntilNextStrafe = 0.f;
 	
 	// 회전 방식 복원용 원본 값 (이동 시작 시 저장, 종료 시 복원).
 	bool bSavedOrientRotationToMovement = true;

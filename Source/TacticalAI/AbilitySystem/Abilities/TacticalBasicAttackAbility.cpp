@@ -5,6 +5,7 @@
 #include "AbilitySystem/Attributes/TacticalCombatAttributeSet.h"
 #include "AbilitySystem/Tags/TacticalGameplayTags.h"
 #include "AI/Targeting/TargetSelectorComponent.h"
+#include "AI/Targeting/Targetable.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
@@ -361,11 +362,11 @@ bool UTacticalBasicAttackAbility::CanKeepCurrentStepTarget(
 }
 
 // =======================================================
-// 플레이어 평타의 타수 시작 방향 정렬
+// 평타 타수 시작 방향 정렬
 // 대상이 있으면 대상 방향, 없으면 이동 입력 방향을 사용한다.
 // 타수 도중에는 이 함수에서 방향을 갱신하지 않는다.
 //
-// プレイヤー通常攻撃の各段開始時の方向整列。
+// 通常攻撃の各段開始時の方向整列。
 // 対象があれば対象方向、なければ移動入力方向を使用する。
 // 段の途中ではこの関数による方向更新を行わない。
 // =======================================================
@@ -374,10 +375,10 @@ void UTacticalBasicAttackAbility::UpdateCurrentStepFacing()
 	if (!bFaceTargetOnStepStart) return;
 
 	APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
-	if (!AvatarPawn || !AvatarPawn->IsPlayerControlled()) return;
+	if (!AvatarPawn) return;
 
-	// [1] 확정된 대상 또는 입력에서 공격 방향을 구한다.
-	// [1] 確定した対象または入力から攻撃方向を求める。
+	// [1] 확정된 대상 또는 플레이어 입력에서 공격 방향을 구한다.
+	// [1] 確定した対象またはプレイヤー入力から攻撃方向を求める。
 	FVector AttackDirection2D = FVector::ZeroVector;
 
 	if (const AActor* TargetActor = CurrentStepTarget.Get())
@@ -385,7 +386,7 @@ void UTacticalBasicAttackAbility::UpdateCurrentStepFacing()
 		AttackDirection2D =
 			(TargetActor->GetActorLocation() - AvatarPawn->GetActorLocation()).GetSafeNormal2D();
 	}
-	else
+	else if (AvatarPawn->IsPlayerControlled())
 	{
 		AttackDirection2D = GetDesiredInputDirection2D();
 	}
@@ -411,16 +412,16 @@ void UTacticalBasicAttackAbility::UpdateCurrentStepFacing()
 float UTacticalBasicAttackAbility::CalculateCurrentStepRootMotionScale(
 	const FName& SectionName) const
 {
-	// [1] 対象方向へ整列するプレイヤー攻撃のみ補正する。
-	// [1] 대상 방향으로 정렬하는 플레이어 공격만 보정한다.
+	// [1] 대상 방향으로 정렬하는 공격의 이동량을 보정한다.
+	// [1] 対象方向へ整列する攻撃の移動量を補正する。
 	const ACharacter* AvatarCharacter =
 		Cast<ACharacter>(GetAvatarActorFromActorInfo());
 
 	const ACharacter* TargetCharacter =
 		Cast<ACharacter>(CurrentStepTarget.Get());
 
-	if (!AvatarCharacter || !AvatarCharacter->IsPlayerControlled() ||
-		!TargetCharacter || !bFaceTargetOnStepStart || !AttackMontage)
+	if (!AvatarCharacter || !TargetCharacter ||
+		!bFaceTargetOnStepStart || !AttackMontage)
 	{
 		return 1.f;
 	}
@@ -664,9 +665,108 @@ void UTacticalBasicAttackAbility::PlayCurrentAttackStep()
 	SourceASC->CurrentMontageJumpToSection(CurrentStep.MontageSection);
 }
 
+// =======================================================
+// 현재 타수의 명중 가능 여부
+// 대상은 다시 선정하지 않고, 타격 시점의 위치와 자격만 검사한다.
+//
+// 現在段の命中可否。
+// 対象は再選定せず、ヒット時点の位置と資格のみ検証する。
+// =======================================================
+bool UTacticalBasicAttackAbility::CanHitCurrentStepTarget() const
+{
+	// [1] 공격자와 대상의 유효성 및 타격 대상 자격을 확인한다.
+	// [1] 攻撃者と対象の有効性、および対象資格を確認する。
+	const AActor* AvatarActor = GetAvatarActorFromActorInfo();
+	AActor* TargetActor = CurrentStepTarget.Get();
+
+	if (!IsValid(AvatarActor) || !IsValid(TargetActor) || AvatarActor == TargetActor)
+	{
+		return false;
+	}
+
+	if (!TargetActor->Implements<UTargetable>() ||
+		!ITargetable::Execute_IsTargetable(TargetActor))
+	{
+		return false;
+	}
+
+	// [2] 수평 거리와 별도로 중심 간 높이 차이를 제한한다.
+	// [2] 水平距離とは別に、中心間の高低差を制限する。
+	FVector ToTarget2D = TargetActor->GetActorLocation() - AvatarActor->GetActorLocation();
+
+	if (FMath::Abs(ToTarget2D.Z) >
+		FMath::Max(0.0, static_cast<double>(MaxHitHeightDifference)))
+	{
+		return false;
+	}
+
+	ToTarget2D.Z = 0.0;
+
+	// [3] 양쪽 캡슐 반경을 더해 표면 간격 기준의 명중 거리를 계산한다.
+	// [3] 両者のカプセル半径を加え、表面間距離を基準とする命中距離を計算する。
+	double AvatarRadius = 0.0;
+	double TargetRadius = 0.0;
+
+	if (const ACharacter* AvatarCharacter = Cast<ACharacter>(AvatarActor))
+	{
+		if (const UCapsuleComponent* Capsule = AvatarCharacter->GetCapsuleComponent())
+		{
+			AvatarRadius = Capsule->GetScaledCapsuleRadius();
+		}
+	}
+
+	if (const ACharacter* TargetCharacter = Cast<ACharacter>(TargetActor))
+	{
+		if (const UCapsuleComponent* Capsule = TargetCharacter->GetCapsuleComponent())
+		{
+			TargetRadius = Capsule->GetScaledCapsuleRadius();
+		}
+	}
+
+	const double MaxCenterDistance =
+		AvatarRadius + TargetRadius + FMath::Max(0.0, static_cast<double>(HitRange));
+
+	const double DistanceSquared = ToTarget2D.SizeSquared();
+	if (DistanceSquared > FMath::Square(MaxCenterDistance))
+	{
+		return false;
+	}
+
+	// 같은 수평 위치에서는 방향을 판정할 수 없으므로 거리 판정만 사용한다.
+	// 同一水平位置では方向を判定できないため、距離判定のみ使用する。
+	if (DistanceSquared <= KINDA_SMALL_NUMBER)
+	{
+		return true;
+	}
+
+	// [4] 타격 순간의 캐릭터 정면을 기준으로 명중 각도를 검사한다.
+	// [4] ヒット時点のキャラクター前方を基準に命中角度を検証する。
+	const double HalfAngleDeg = FMath::Clamp(
+		static_cast<double>(HitHalfAngleDeg), 0.0, 180.0);
+
+	if (HalfAngleDeg >= 180.0)
+	{
+		return true;
+	}
+
+	const FVector FacingDirection2D = AvatarActor->GetActorForwardVector().GetSafeNormal2D();
+	const FVector TargetDirection2D = ToTarget2D / FMath::Sqrt(DistanceSquared);
+	const double DirectionDot = FVector::DotProduct(FacingDirection2D, TargetDirection2D);
+	const double CosThreshold = FMath::Cos(FMath::DegreesToRadians(HalfAngleDeg));
+
+	return DirectionDot >= CosThreshold;
+}
+
 void UTacticalBasicAttackAbility::ApplyCurrentStepDamage()
 {
 	if (bDamageAppliedForCurrentStep)
+	{
+		return;
+	}
+
+	// 타격 시점에 범위나 대상 자격을 벗어났으면 피해를 적용하지 않는다.
+	// ヒット時点で範囲外、または対象資格を失っていればダメージを適用しない。
+	if (!CanHitCurrentStepTarget())
 	{
 		return;
 	}
