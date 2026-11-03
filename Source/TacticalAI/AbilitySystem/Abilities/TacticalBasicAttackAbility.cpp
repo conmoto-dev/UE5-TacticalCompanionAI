@@ -251,8 +251,8 @@ AActor* UTacticalBasicAttackAbility::ResolveAttackTarget_Implementation() const
 		return nullptr;
 	}
 
-	// [1] AI 조작에서는 기존 셀렉터의 확정 대상을 사용한다.
-	// [1] AI操作では既存セレクタの確定ターゲットを使用する。
+	// [1] AI 조작에서는 사이클 도중 대상을 바꾸지 않는다.
+	// [1] AI操作ではサイクル途中で対象を変更しない。
 	const APawn* AvatarPawn = Cast<APawn>(GetAvatarActorFromActorInfo());
 	if (!AvatarPawn)
 	{
@@ -261,6 +261,10 @@ AActor* UTacticalBasicAttackAbility::ResolveAttackTarget_Implementation() const
 
 	if (!AvatarPawn->IsPlayerControlled())
 	{
+		if (AActor* PreviousTarget = CurrentStepTarget.Get())
+		{
+			if (TargetSelector->IsValidCandidate(PreviousTarget)) return PreviousTarget;
+		}
 		return TargetSelector->GetCurrentTarget();
 	}
 

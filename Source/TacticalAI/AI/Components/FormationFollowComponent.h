@@ -38,6 +38,10 @@ public:
 	UFormationFollowComponent();
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
+	// 전투 종료 등으로 FollowMode가 다시 활성화될 때, 첫 이동 명령이 생략되지 않게 한다.
+	// 戦闘終了などでFollowModeが再び有効化された際、最初の移動命令が省略されないようにする。
+	virtual void Activate(bool bReset = false) override;
+	
 	// Set new formation data and reset cache. Called by PartyManager.
 	// PartyManagerからの呼び出し専用。隊形変更時のキャッシュリセット。
 	void ApplyFormation(class UFormationDataAsset* NewFormation);

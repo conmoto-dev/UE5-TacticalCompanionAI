@@ -46,6 +46,30 @@ void UFormationFollowComponent::BeginPlay()
 	}
 }
 
+// =======================================================
+// FollowMode 활성화
+// 비활성 동안에는 다른 레이어(전투 행동)가 이동을 발행하므로,
+// 캐릭터의 이동 명령 캐시에는 비활성 이전의 추종 목표가 남아 있을 수 있다.
+// 그 값과 가까운 첫 목표가 중복 억제로 생략되지 않도록 전 멤버의 캐시를 무효화한다.
+//
+// FollowModeの有効化。
+// 無効の間は別レイヤー（戦闘行動）が移動を発行するため、
+// キャラクターの移動命令キャッシュには無効化前の追従目標が残っている場合がある。
+// その値に近い最初の目標が重複抑制で省略されないよう、全メンバーのキャッシュを無効化する。
+// =======================================================
+void UFormationFollowComponent::Activate(bool bReset)
+{
+	Super::Activate(bReset);
+	
+	for (APartyCharacter* Follower : GetPartyFollowers())
+	{
+		if (Follower)
+		{
+			Follower->InvalidateMoveCache();
+		}
+	}
+}
+
 void UFormationFollowComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);

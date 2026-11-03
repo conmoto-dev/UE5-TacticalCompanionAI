@@ -67,9 +67,13 @@ struct FCommitSnapshot
  *
  * 동료를 멤버별로 순회, 각자의 (역할→Strategy, 자기 타겟) 기준 커밋 게이트.
  * 재배치는 트리거 시에만, 그 사이 슬롯 잠금.
+ * 위치 결정만 담당한다. 이동 명령은 발행하지 않으며, 커밋 슬롯은 캐릭터의
+ * IHomeSlotProvider를 거쳐 행동 레이어(StateTree)가 읽고 이동 시점을 결정한다.
  * 
  * 戦闘隊形コンポーネント。
  * メンバー別コミットゲート。再配置はトリガー時のみ、間はスロット固定。
+ * 位置の決定のみ担当する。移動命令は発行せず、コミットスロットはキャラクターの
+ * IHomeSlotProviderを経由して行動レイヤー（StateTree）が読み、移動タイミングを決定する。
  */
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UFormationBattleComponent : public UTacticalFormationComponent
@@ -106,8 +110,9 @@ private:
 	// =========================================================================
 	// 再配置決定ゲート（個別型専用）。プレイヤー位置はトリガーに入れない（オービット復活）。
 
-	// 재배치 실행: 현재 월드로 슬롯 생성 → 환경보정 → 커밋 갱신 → locomotion에 전달.
-	void CommitReposition(APartyCharacter* Member, const FSlotGenContext& Context,
+	// 재배치 실행: 현재 월드로 슬롯 생성 → 환경보정 → 커밋 갱신. 이동 명령은 발행하지 않는다.
+	// 再配置の実行：現在のワールドでスロット生成 → 環境補正 → コミット更新。移動命令は発行しない。
+	void CommitReposition(const FSlotGenContext& Context,
 		const FRoleSlotConfig& Config, FCommitSnapshot& OutSnapshot);
 
 protected:

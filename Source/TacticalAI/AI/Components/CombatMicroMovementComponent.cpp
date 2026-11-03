@@ -7,6 +7,9 @@
 #include "AI/Targeting/TargetSelectorComponent.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "Characters/PartyCharacter.h"
+#include "AbilitySystemGlobals.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystem/Tags/TacticalGameplayTags.h"
 #include "DrawDebugHelpers.h"
 
 // 미세 이동 디버그 표시. 홈 슬롯 반경 / 이동 방향 / 개별 이동 실행 상태.
@@ -109,13 +112,6 @@ bool UCombatMicroMovementComponent::StartStrafe()
 		FMath::Max(StrafeDurationRange.X, StrafeDurationRange.Y));
 	StrafeState = ECombatStrafeState::Running;
 
-	// [3] 次の再配置が以前の移動命令キャッシュによって省略されないようにする。
-	// [3] 다음 재배치가 이전 이동 명령 캐시 때문에 생략되지 않도록 한다.
-	if (APartyCharacter* PartyChar = Cast<APartyCharacter>(GetOwner()))
-	{
-		PartyChar->InvalidateMoveCache();
-	}
-
 	return true;
 }
 
@@ -158,14 +154,20 @@ void UCombatMicroMovementComponent::SetSuppressed(bool bInSuppressed)
 
 bool UCombatMicroMovementComponent::PassesActivationChecks(FVector& OutHomeSlot, const AActor*& OutTarget) const
 {
-	// 검사 순서는 싼 것부터. 주석 번호는 판정 흐름도의 조건 순서와 대응.
-	// 検査順は安い順。番号は判定フロー図の条件順と対応。
-
-	// [1] 외부 일시 정지 (공격 중 등).
+	// [1] 외부 일시 정지 (스턴 등 GAS 밖의 정지 요청).
+	// [1] 外部からの一時停止（スタンなどGAS外の停止要求）。
 	if (bSuppressed) return false;
 
 	const ACharacter* OwnerCharacter = Cast<ACharacter>(GetOwner());
 	if (!OwnerCharacter) return false;
+
+	// [1-2] 공격 동작 중이 아닐 것. 루트모션 이동과 타수별 방향 정렬은 Ability가 소유하므로 이동과 주시를 모두 양보한다.
+	// [1-2] 攻撃動作中でないこと。ルートモーション移動と段ごとの方向整列はAbilityが所有するため、移動と注視の両方を譲る。
+	if (const UAbilitySystemComponent* AbilitySystem =
+		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(OwnerCharacter))
+	{
+		if (AbilitySystem->HasMatchingGameplayTag(TacticalGameplayTags::State_Attacking)) return false;
+	}
 
 	// [2] AI 이동 명령이 없을 것. MoveTo(재배치·추종·트래버설) 진행 중이면 무조건 양보.
 	//     이 검사 하나가 이동 명령 충돌의 해결책 전부 — 기존 경로가 항상 이긴다.

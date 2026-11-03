@@ -25,14 +25,12 @@ enum class ECombatStrafeState : uint8
 
 // =======================================================
 // 홈 슬롯 주변의 전투 미세 이동
-// 외부 요청마다 방향과 지속시간을 정하여 한 번 이동한다.
-// 홈 슬롯과 대상을 참조하며, MoveTo 진행 중에는 이동과 주시를 중단한다.
+// 홈 슬롯과 대상을 참조하며, MoveTo 진행 중과 공격 동작 중(State_Attacking)에는 이동과 주시를 중단한다.
 // 홈 슬롯 반경은 방향 선정 기준이며 이동 범위를 제한하지 않는다.
 //
 // ホームスロット周辺の戦闘微細移動。
 // 外部要求ごとに方向と持続時間を決め、一回移動する。
-// ホームスロットと対象を参照し、MoveTo中は移動と注視を中断する。
-// ホームスロット半径は方向選択の基準であり、移動範囲を制限しない。
+// ホームスロットと対象を参照し、MoveTo中と攻撃動作中（State_Attacking）は移動と注視を中断する。
 // =======================================================
 UCLASS(ClassGroup=(TacticalAI), meta=(BlueprintSpawnableComponent))
 class TACTICALAI_API UCombatMicroMovementComponent : public UActorComponent
@@ -134,7 +132,8 @@ private:
 
 	bool bCombatFacing = false;
 	
-	// 외부 일시 정지 상태 (공격 중 등).
+	// 외부 일시 정지 상태 (스턴 등 GAS 밖의 정지 요청). 공격 중 정지는 State_Attacking으로 판정한다.
+	// 外部からの一時停止状態（スタンなどGAS外の停止要求）。攻撃中の停止はState_Attackingで判定する。
 	bool bSuppressed = false;
 
 	// 자유 이동 각도의 하한/상한(도). 적 방향 0도 기준 좌우 크기.

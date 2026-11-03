@@ -132,7 +132,7 @@ void UFormationBattleComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 		if (bNeedsReposition)
 		{
-			CommitReposition(Member, SlotGenContext, *Config, Snapshot);
+			CommitReposition(SlotGenContext, *Config, Snapshot);
 		}
 #if ENABLE_DRAW_DEBUG
 		else
@@ -182,7 +182,7 @@ TArray<FVector> UFormationBattleComponent::GatherOccupiedSlots(const APartyChara
 // 재배치 게이트
 // =========================================================================
 void UFormationBattleComponent::CommitReposition(
-	APartyCharacter* Member, const FSlotGenContext& Context,
+	const FSlotGenContext& Context,
 	const FRoleSlotConfig& Config, FCommitSnapshot& OutSnapshot)
 {
 	// [1] 이 순간의 월드로 슬롯 1개 생성. 플레이어 방향은 Strategy 내부 목적지 편향으로만 반영 — 상시 추적 아님.
@@ -195,13 +195,13 @@ void UFormationBattleComponent::CommitReposition(
 	const FVector PullOrigin = Target ? Target->GetActorLocation() : Context.RequesterLocation;
 	const FVector AdjustedSlot = AdjustLocationForEnvironment(RawSlot, PullOrigin);
 
-	// [3] 커밋: 스냅샷 갱신 + locomotion 전달.
-	// コミット：スナップショット更新＋locomotionへ伝達。
+	// [3] 커밋: 스냅샷만 갱신한다. 이동 시점은 커밋 슬롯을 읽는 행동 레이어가 결정한다.
+	//     공격 중 재커밋이 즉시 이동으로 이어지지 않도록, 여기서는 이동 명령을 발행하지 않는다.
+	// [3] コミット：スナップショットのみ更新する。移動タイミングはコミットスロットを読む行動レイヤーが決定する。
+	//     攻撃中の再コミットが即座に移動へつながらないよう、ここでは移動命令を発行しない。
 	OutSnapshot.CommittedSlot = AdjustedSlot;
 	OutSnapshot.CommitTime    = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
 	OutSnapshot.bHasCommitted = true;
-
-	Member->UpdateTargetSlotLocation(AdjustedSlot, false);
 }
 
 // ===========
