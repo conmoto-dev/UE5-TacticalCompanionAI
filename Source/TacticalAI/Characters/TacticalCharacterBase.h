@@ -76,6 +76,15 @@ public:
 	// 呼び出し側がTactical固有のクラスを知らなくてもASCを取得できる。
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
+	// 빙의 시점. BeginPlay보다 먼저 호출되는 경우(AI 자동 빙의 등) 여기서 ASC를 초기화한다.
+	// Controller가 Pawn을 참조하기 전에 호출되므로, Controller 측 처리(StateTree 시작 등)보다
+	// Ability 부여가 먼저 끝나는 것이 보장된다.
+	//
+	// Possess時点。BeginPlayより先に呼ばれる場合（AIの自動Possessなど）はここでASCを初期化する。
+	// ControllerがPawnを参照する前に呼ばれるため、Controller側の処理（StateTree開始など）より
+	// Ability付与が先に完了することが保証される。
+	virtual void PossessedBy(AController* NewController) override;
+	
 	// 플레이어·AI 요청 등 Tactical 전용 함수를 사용하기 위한 접근점.
 	// 위의 공통 Getter와 동일한 ASC를 반환하며, 별도 컴포넌트를 생성하지 않는다.
 	//
@@ -85,11 +94,11 @@ public:
 	UTacticalAbilitySystemComponent* GetTacticalAbilitySystemComponent() const;
 
 protected:
-	// Controller가 아직 없어도 캐릭터를 ASC의 Owner/Avatar로 초기화한다.
-	// ASC 초기화 후 권한이 있는 경우 시작 Ability를 부여한다.
+	// 빙의보다 BeginPlay가 먼저인 경우(플레이어 빙의·빙의되지 않는 캐릭터)에 ASC를 초기화한다.
+	// 이미 PossessedBy에서 초기화했으면 다시 하지 않는다.
 	//
-	// Controllerが未設定でも、キャラクターをASCのOwner・Avatarとして初期化する。
-	// ASC 初期化後、権限がある場合StartupAbilitiesを付与する。
+	// PossessよりBeginPlayが先の場合（プレイヤーのPossess・Possessされないキャラクター）にASCを初期化する。
+	// すでにPossessedByで初期化済みなら再度行わない。
 	virtual void BeginPlay() override;
 
 	// 동료 스왑으로 조작 주체가 바뀌면 ASC의 Controller 관련 참조를 갱신한다.
@@ -128,6 +137,21 @@ protected:
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
 
 private:
+	// =======================================================
+	// ASC 초기화
+	// PossessedBy와 BeginPlay 중 먼저 호출된 쪽에서 한 번만 실행한다.
+	// 이후의 Controller 변경은 NotifyControllerChanged에서 ActorInfo만 갱신한다.
+	//
+	// ASC初期化。
+	// PossessedByとBeginPlayのうち、先に呼ばれた側で一度だけ実行する。
+	// 以降のController変更はNotifyControllerChangedでActorInfoのみ更新する。
+	// =======================================================
+	void InitializeAbilitySystem();
+
+	// ASC 초기화 완료 여부. 직렬화하지 않는 런타임 상태.
+	// ASC初期化の完了有無。シリアライズしないランタイム状態。
+	bool bAbilitySystemInitialized = false;
+	
 	// 포위 진형의 기준 반경. 
 	// 실제 충돌 크기와 진형 배치 간격을 독립적으로 조정하기 위해 캡슐 충돌 반경과 분리해서 보관한다.
 	//

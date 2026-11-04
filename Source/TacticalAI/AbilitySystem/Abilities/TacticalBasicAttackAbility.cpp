@@ -458,41 +458,17 @@ float UTacticalBasicAttackAbility::CalculateCurrentStepRootMotionScale(
 		return 0.f;
 	}
 
-	// [3] 현재 타수의 몽타주 섹션 구간을 확인한다.
-	// [3] 現在段のMontage Section区間を確認する。
-	const int32 SectionIndex = AttackMontage->GetSectionIndex(SectionName);
-	if (SectionIndex == INDEX_NONE)
+	// [3] 현재 타수 섹션의 원본 루트모션 수평 이동량을 월드 단위로 구한다.
+	// [3] 現在段Sectionの元のルートモーション水平移動量をワールド単位で求める。
+	double OriginalMoveDistance = 0.0;
+	if (!TryExtractSectionRootMotionDistance2D(SectionName, *AvatarMesh, OriginalMoveDistance) ||
+		OriginalMoveDistance <= KINDA_SMALL_NUMBER)
 	{
 		return 1.f;
 	}
 
-	float StartTime = 0.f;
-	float EndTime = 0.f;
-	AttackMontage->GetSectionStartAndEndTime(SectionIndex, StartTime, EndTime);
-
-	if (EndTime <= StartTime)
-	{
-		return 1.f;
-	}
-
-	// [4] 섹션의 원본 루트모션 변위를 추출하고 메시의 월드 변환을 반영한다.
-	// 캡슐 거리와 같은 월드 단위로 비교하기 위해 메시 스케일도 반영한다.
-	// [4] Sectionの元のルートモーション変位にMeshのワールド変換を適用する。
-	// カプセル間距離と同じワールド単位で比較するため、Meshのスケールも反映する。
-	const FTransform RootMotionTransform =
-		AttackMontage->ExtractRootMotionFromTrackRange(StartTime, EndTime);
-
-	const FVector WorldTranslation = AvatarMesh->GetComponentTransform().TransformVector(
-		RootMotionTransform.GetTranslation());
-
-	const double OriginalMoveDistance = WorldTranslation.Size2D();
-	if (OriginalMoveDistance <= KINDA_SMALL_NUMBER)
-	{
-		return 1.f;
-	}
-
-	// [5] 원본 이동량 이내에서 적 앞까지 필요한 비율만 사용한다.
-	// [5] 元の移動量を上限に、対象の手前まで必要な割合だけ使用する。
+	// [4] 원본 이동량 이내에서 적 앞까지 필요한 비율만 사용한다.
+	// [4] 元の移動量を上限に、対象の手前まで必要な割合だけ使用する。
 	return static_cast<float>(FMath::Clamp(
 		AvailableMoveDistance / OriginalMoveDistance, 0.0, 1.0));
 }
@@ -503,6 +479,91 @@ void UTacticalBasicAttackAbility::ResetRootMotionScale()
 	{
 		AvatarCharacter->SetAnimRootMotionTranslationScale(1.f);
 	}
+}
+
+// =======================================================
+// 섹션 원본 루트모션의 수평 이동량
+// 타수별 이동 배율과 AI 교전 거리가 같은 추출 규칙을 사용한다.
+//
+// Section元ルートモーションの水平移動量。
+// 段ごとの移動倍率とAI交戦距離が同じ抽出規則を使用する。
+// =======================================================
+bool UTacticalBasicAttackAbility::TryExtractSectionRootMotionDistance2D(
+	const FName& SectionName,
+	const USkeletalMeshComponent& Mesh,
+	double& OutDistance) const
+{
+	OutDistance = 0.0;
+	if (!AttackMontage) return false;
+
+	// [1] 섹션 구간을 확인한다.
+	// [1] Section区間を確認する。
+	const int32 SectionIndex = AttackMontage->GetSectionIndex(SectionName);
+	if (SectionIndex == INDEX_NONE) return false;
+
+	float StartTime = 0.f;
+	float EndTime = 0.f;
+	AttackMontage->GetSectionStartAndEndTime(SectionIndex, StartTime, EndTime);
+	if (EndTime <= StartTime) return false;
+
+	// [2] 원본 루트모션 변위에 메시의 월드 변환을 반영한다.
+	//     캡슐 거리와 같은 월드 단위로 비교하기 위해 메시 스케일도 반영한다.
+	// [2] 元のルートモーション変位にMeshのワールド変換を適用する。
+	//     カプセル間距離と同じワールド単位で比較するため、Meshのスケールも反映する。
+	const FTransform RootMotionTransform =
+		AttackMontage->ExtractRootMotionFromTrackRange(StartTime, EndTime);
+
+	const FVector WorldTranslation = Mesh.GetComponentTransform().TransformVector(
+		RootMotionTransform.GetTranslation());
+
+	OutDistance = WorldTranslation.Size2D();
+	return true;
+}
+
+// =======================================================
+// AI 교전 거리 산출 (IAbilityRangeProvider)
+// 전체 타수의 루트모션 수평 이동량 합계에 비율을 곱한다.
+// 타수마다 대상 방향으로 다시 정렬하므로 순 변위가 아니라 타수별 이동량을 합산한다.
+// 가까운 위치에서 시작해도 타수별 이동 배율이 대상 앞에서 이동을 멈추게 한다.
+// CDO에서 호출될 수 있으므로 상태를 변경하지 않는다.
+//
+// AI交戦距離の算出（IAbilityRangeProvider）。
+// 全段のルートモーション水平移動量の合計に割合を掛ける。
+// 段ごとに対象方向へ再整列するため、正味の変位ではなく段ごとの移動量を合算する。
+// 近い位置から開始しても、段ごとの移動倍率が対象の手前で移動を止める。
+// CDOから呼ばれ得るため状態を変更しない。
+// =======================================================
+bool UTacticalBasicAttackAbility::TryGetEngageDistance(
+	const FGameplayAbilityActorInfo& ActorInfo,
+	float& OutDistance) const
+{
+	// [1] 산출에 필요한 공격 설정과 시전자 메시를 확인한다.
+	// [1] 算出に必要な攻撃設定と術者のMeshを確認する。
+	if (!AttackMontage || AttackSteps.IsEmpty()) return false;
+
+	const ACharacter* AvatarCharacter = Cast<ACharacter>(ActorInfo.AvatarActor.Get());
+	const USkeletalMeshComponent* AvatarMesh = AvatarCharacter ? AvatarCharacter->GetMesh() : nullptr;
+	if (!AvatarMesh) return false;
+
+	// [2] 타수별 섹션의 원본 이동량을 합산한다. 섹션 설정 오류가 있으면 산출하지 않는다.
+	// [2] 段ごとのSectionの元移動量を合算する。Section設定に誤りがあれば算出しない。
+	double TotalMoveDistance = 0.0;
+	for (const FTacticalBasicAttackStep& AttackStep : AttackSteps)
+	{
+		double StepMoveDistance = 0.0;
+		if (!TryExtractSectionRootMotionDistance2D(AttackStep.MontageSection, *AvatarMesh, StepMoveDistance))
+		{
+			return false;
+		}
+		TotalMoveDistance += StepMoveDistance;
+	}
+
+	// [3] 제자리 공격이면 루트모션으로 교전 거리를 정할 수 없으므로 호출 측 기본값에 맡긴다.
+	// [3] その場攻撃ならルートモーションで交戦距離を決められないため、呼び出し側の既定値に任せる。
+	if (TotalMoveDistance <= KINDA_SMALL_NUMBER) return false;
+
+	OutDistance = static_cast<float>(TotalMoveDistance * EngageRootMotionRatio);
+	return true;
 }
 
 // =======================================================

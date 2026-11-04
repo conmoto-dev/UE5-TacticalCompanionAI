@@ -2,12 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "AbilitySystem/Interfaces/AbilityRangeProvider.h"
 #include "TacticalBasicAttackAbility.generated.h"
 
 class AActor;
 class UAnimMontage;
 class UGameplayEffect;
 class UTargetSelectorComponent;
+class USkeletalMeshComponent;
 class UAbilityTask_PlayMontageAndWait;
 class UAbilityTask_WaitGameplayEvent;
 class UAbilityTask_WaitInputRelease;
@@ -45,15 +47,18 @@ struct FTacticalBasicAttackStep
 // InputBound: 입력 유지 중 반복하며, 해제하면 현재 타격을 마무리하고 종료한다.
 // AutoComplete: 입력 상태와 관계없이 전체 타수를 한 사이클 실행하고 종료한다.
 // 타격과 타수 종료 시점은 애니메이션 Gameplay Event로 전달받는다.
+// AI 교전 거리는 전체 타수의 루트모션 이동량에서 산출하여 IAbilityRangeProvider로 공개한다.
 //
 // 連続通常攻撃Gameplay Ability。
 // ASCから受け取った実行方式に従ってAttackStepsを再生する。
 // InputBound: 入力中は繰り返し、解放後は現在段を完了して終了する。
 // AutoComplete: 入力状態に関係なく全段を1サイクル実行して終了する。
 // ヒットと各段の終了タイミングはAnimation Gameplay Eventから受け取る。
+// AI交戦距離は全段のルートモーション移動量から算出し、IAbilityRangeProviderとして公開する。
 // =======================================================
 UCLASS(Abstract, Blueprintable)
-class TACTICALAI_API UTacticalBasicAttackAbility : public UGameplayAbility
+class TACTICALAI_API UTacticalBasicAttackAbility : public UGameplayAbility,
+												  public IAbilityRangeProvider
 {
 	GENERATED_BODY()
 
@@ -67,6 +72,12 @@ public:
 		const FGameplayTagContainer* TargetTags = nullptr,
 		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 
+	// AI 교전 거리 인터페이스. 전체 타수의 루트모션 수평 이동량 합계 × EngageRootMotionRatio.
+	// AI交戦距離インターフェース。全段のルートモーション水平移動量の合計 × EngageRootMotionRatio。
+	virtual bool TryGetEngageDistance(
+		const FGameplayAbilityActorInfo& ActorInfo,
+		float& OutDistance) const override;
+	
 protected:
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
@@ -142,6 +153,13 @@ private:
 		const AActor* TargetActor) const;
 
 	void UpdateCurrentStepFacing();
+	
+	// 섹션 원본 루트모션의 수평 이동량(월드 단위). 섹션이 없거나 구간이 잘못되면 false.
+	// Sectionの元のルートモーション水平移動量（ワールド単位）。Sectionが無い、または区間が不正ならfalse。
+	bool TryExtractSectionRootMotionDistance2D(
+		const FName& SectionName,
+		const USkeletalMeshComponent& Mesh,
+		double& OutDistance) const;
 	
 	// 대상까지의 거리에 따른 평타 루트모션 이동 배율.
 	// 対象までの距離に応じた通常攻撃のルートモーション移動倍率。
@@ -237,6 +255,22 @@ private:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|Movement",
 		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", Units = "cm"))
 	float AttackStopDistanceMargin = 10.f;
+	
+	// =======================================================
+	// AI 교전 거리 설정
+	// AI가 평타 사이클을 시작하는 대상과의 거리를 루트모션에서 산출한다.
+	//
+	// AI交戦距離の設定。
+	// AIが通常攻撃サイクルを開始する対象との距離をルートモーションから算出する。
+	// =======================================================
+
+	// 전체 타수 루트모션 이동량 합계 중 교전 거리로 사용할 비율.
+	// 작을수록 대상 가까이에서 시작하고, 클수록 멀리서 시작해 앞 타수가 헛칠 수 있다.
+	// 全段のルートモーション移動量合計のうち、交戦距離として使う割合。
+	// 小さいほど対象の近くで開始し、大きいほど遠くから開始して前段が空振りし得る。
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Basic Attack|AI",
+		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float EngageRootMotionRatio = 0.5f;
 	
 	// =======================================================
 	// 타격 판정 설정

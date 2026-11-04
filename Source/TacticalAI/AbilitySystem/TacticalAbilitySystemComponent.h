@@ -82,6 +82,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tactical Ability|Requests")
 	void RequestReleaseAbilityInput(FGameplayTag AbilityTag);
 
+	// =======================================================
+	// Ability Queries
+	//
+	// Ability 구체 클래스를 모르는 호출 측(AI 등)이
+	// Asset Tag로 Ability가 공개한 값을 조회한다. 
+	//
+	// Abilityの具体クラスを知らない呼び出し側（AIなど）が、
+	// Asset TagでAbilityが公開した値を照会する。
+	// =======================================================
+
+	// 태그와 정확히 일치하는 Ability 중 IAbilityRangeProvider를 구현한 것의 교전 거리를 조회한다.
+	// 구현한 Ability가 없거나 모두 산출에 실패하면 false.
+	//
+	// タグと完全一致するAbilityのうち、IAbilityRangeProviderを実装したものの交戦距離を照会する。
+	// 実装したAbilityがない、またはすべて算出に失敗した場合はfalse。
+	bool TryGetAbilityEngageDistance(FGameplayTag AbilityTag, float& OutDistance) const;
+	
 private:
 	// =======================================================
 	// Shared Activation

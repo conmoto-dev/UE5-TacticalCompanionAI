@@ -1,4 +1,5 @@
 #include "AbilitySystem/TacticalAbilitySystemComponent.h"
+#include "AbilitySystem/Interfaces/AbilityRangeProvider.h"
 #include "AbilitySystem/Tags/TacticalGameplayTags.h"
 #include "Abilities/GameplayAbility.h"
 #include "Abilities/GameplayAbilityTypes.h"
@@ -183,6 +184,45 @@ void UTacticalAbilitySystemComponent::RequestReleaseAbilityInput(FGameplayTag Ab
 				PrimaryInstance->GetCurrentActivationInfo().GetActivationPredictionKey());
 		}
 	});
+}
+
+// =======================================================
+// Ability Engage Distance Query
+//
+// Asset Tag로 찾은 Ability에 교전 거리를 묻는다.
+// 질의 대상은 Spec의 Ability(CDO)이며, 시전자 기준 값은 이 ASC의 ActorInfo로 전달한다.
+//
+// Asset Tagで検索したAbilityへ交戦距離を問い合わせる。
+// 照会対象はSpecのAbility（CDO）であり、術者基準の値はこのASCのActorInfoで渡す。
+// =======================================================
+bool UTacticalAbilitySystemComponent::TryGetAbilityEngageDistance(FGameplayTag AbilityTag, float& OutDistance) const
+{
+	// [1] 태그와 시전자 정보를 확인한다.
+	// [1] タグと術者情報を確認する。
+	if (!AbilityTag.IsValid()) return false;
+
+	const FGameplayAbilityActorInfo* ActorInfo = AbilityActorInfo.Get();
+	if (!ActorInfo) return false;
+
+	// [2] 태그가 정확히 일치하고 계약을 구현한 Ability에 질의한다.
+	// [2] タグが完全一致し、契約を実装したAbilityへ問い合わせる。
+	for (const FGameplayAbilitySpec& Spec : GetActivatableAbilities())
+	{
+		if (!Spec.Ability) continue;
+		if (!Spec.Ability->GetAssetTags().HasTagExact(AbilityTag)) continue;
+
+		const IAbilityRangeProvider* RangeProvider = Cast<IAbilityRangeProvider>(Spec.Ability);
+		if (!RangeProvider) continue;
+
+		float Distance = 0.f;
+		if (RangeProvider->TryGetEngageDistance(*ActorInfo, Distance))
+		{
+			OutDistance = Distance;
+			return true;
+		}
+	}
+
+	return false;
 }
 
 // =======================================================

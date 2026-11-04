@@ -48,21 +48,43 @@ ATacticalCharacterBase::ATacticalCharacterBase()
 	MoveComp->BrakingDecelerationFalling = 1500.f;
 }
 
+void ATacticalCharacterBase::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 빙의보다 먼저 시작한 경우에 대비해 초기화한다. 이미 끝났으면 건너뛴다.
+	// Possessより先に開始した場合に備えて初期化する。完了済みならスキップする。
+	InitializeAbilitySystem();
+}
+
+// 부모 처리에서 Controller 변경 알림(NotifyControllerChanged)이 먼저 실행되고,
+// 그 뒤 아직 초기화되지 않았으면 여기서 초기화한다.
+// 親の処理でController変更通知（NotifyControllerChanged）が先に実行され、
+// その後まだ初期化されていなければここで初期化する。
+void ATacticalCharacterBase::PossessedBy(AController* NewController)
+{
+	Super::PossessedBy(NewController);
+
+	InitializeAbilitySystem();
+}
+
 // =======================================================
 // 전투 기반 초기화
 //
 // Controller의 존재 여부와 관계없이 캐릭터의 ASC를 초기화한다.
 // Ability를 소유하는 주체와 실제 수행하는 몸이 모두 이 캐릭터이므로,
 // OwnerActor와 AvatarActor에 동일한 Actor를 지정한다.
+// PossessedBy와 BeginPlay 중 먼저 호출된 쪽에서 한 번만 실행한다.
 //
 // 戦闘基盤の初期化。
 // Controllerの有無に関係なく、キャラクターのASCを初期化する。
 // Abilityの所有主体と実行する身体が同じキャラクターのため、
 // OwnerActorとAvatarActorに同じActorを指定する。
+// PossessedByとBeginPlayのうち、先に呼ばれた側で一度だけ実行する。
 // =======================================================
-void ATacticalCharacterBase::BeginPlay()
+void ATacticalCharacterBase::InitializeAbilitySystem()
 {
-	Super::BeginPlay();
+	if (bAbilitySystemInitialized || !AbilitySystemComponent) return;
 
 	// [1] Ability가 참조할 소유자·메시·이동 컴포넌트 등의 정보를 준비한다.
 	// Ability 부여 시점에서도 ActorInfo(소유자와 Avatar 정보)를 사용할 수 있도록 먼저 초기화한다.
@@ -80,6 +102,8 @@ void ATacticalCharacterBase::BeginPlay()
 	{
 		AbilitySystemComponent->GiveStartupAbilities(StartupAbilities);
 	}
+
+	bAbilitySystemInitialized = true;
 }
 
 // =======================================================
@@ -96,14 +120,14 @@ void ATacticalCharacterBase::NotifyControllerChanged()
 {
 	Super::NotifyControllerChanged();
 
-	// [1] 최초 빙의 알림은 BeginPlay 이전에도 들어올 수 있다.
-	// 그 시점의 ASC 초기화는 BeginPlay에 맡기고,
-	// 여기서는 게임 시작 이후 Controller가 변경된 경우만 갱신한다.
+	// [1] 최초 빙의 알림은 ASC 초기화 전에 들어올 수 있다(PossessedBy의 부모 처리 중).
+	// 그 시점의 초기화는 InitializeAbilitySystem에 맡기고,
+	// 여기서는 초기화 이후 Controller가 변경된 경우만 갱신한다.
 	//
-	// [1] 最初の憑依通知はBeginPlayより前に届く場合がある。
-	// その時点のASC初期化はBeginPlayに任せ、
-	// ここではゲーム開始後のController変更のみ更新する。
-	if (!HasActorBegunPlay())
+	// [1] 最初のPossess通知はASC初期化前に届く場合がある（PossessedByの親処理中）。
+	// その時点の初期化はInitializeAbilitySystemに任せ、
+	// ここでは初期化後にControllerが変更された場合のみ更新する。
+	if (!bAbilitySystemInitialized)
 	{
 		return;
 	}
