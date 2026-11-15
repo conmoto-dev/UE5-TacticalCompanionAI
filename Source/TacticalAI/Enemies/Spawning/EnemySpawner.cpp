@@ -1,5 +1,5 @@
 #include "Enemies/Spawning/EnemySpawner.h"
-#include "Enemies/Encounter/GroupEnemyEncounter.h"
+#include "Enemies/Encounter/EnemyEncounter.h"
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -20,8 +20,6 @@ AEnemySpawner::AEnemySpawner()
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
-
-	EnemyGroupClass = AGroupEnemyEncounter::StaticClass();
 	
 #if WITH_EDITORONLY_DATA
 	EditorArrow = CreateEditorOnlyDefaultSubobject<UArrowComponent>(TEXT("EditorArrow"));
@@ -54,28 +52,34 @@ void AEnemySpawner::SpawnEnemies()
 		return;
 	}
 
+	// [1] 재생성 설정에 따라 이전 적과 인카운터를 정리한다.
+	// 再生成設定に従って前回の敵とエンカウンターを削除する。
 	if (bDestroyPreviousSpawnedEnemies)
 	{
 		ClearSpawnedEnemies();
 	}
 
-	switch (FormationMode)
+	// [2] 생성 모드를 선택하고, Group에서만 Formation 방식을 적용한다.
+	// 生成モードを選択し、Groupの場合のみFormation方式を適用する。
+	switch (SpawnMode)
 	{
-	case EEnemyFormationMode::ByEnemyClass:
-		SpawnByEnemyClass();
+	case EEnemySpawnMode::Single:
+		SpawnSingleEnemy();
 		break;
 
-	case EEnemyFormationMode::CompositeFormation:
-		SpawnByCompositeFormation();
+	case EEnemySpawnMode::Group:
+		SpawnEnemyGroup();
 		break;
-
+		
 	default:
 		break;
 	}
-	
+
+	// [3] 실행 중에는 생성한 적을 공통 인카운터에 등록한다.
+	// ゲーム実行中は生成した敵を共通のエンカウンターに登録する。
 	if (GetWorld()->IsGameWorld())
 	{
-		RegisterSpawnedEnemiesToGroup();
+		RegisterSpawnedEnemiesToEncounter();
 	}
 }
 
@@ -89,13 +93,58 @@ void AEnemySpawner::ClearSpawnedEnemies()
 		}
 	}
 	
-	if (IsValid(SpawnedGroup))
+	if (IsValid(SpawnedEncounter))
 	{
-		SpawnedGroup->Destroy();
+		SpawnedEncounter->Destroy();
 	}
-	SpawnedGroup = nullptr;
+	SpawnedEncounter = nullptr;
 
 	SpawnedEnemies.Reset();
+}
+
+// ==================================================
+// Single Enemy Spawn
+//
+// 스포너 위치를 기준으로 적 1체를 생성한다.
+// Spawner位置を基準に敵を1体生成する。
+// ==================================================
+void AEnemySpawner::SpawnSingleEnemy()
+{
+	if (!SingleEnemyClass)
+	{
+		UE_LOG(LogEnemySpawner, Warning,
+			TEXT("SingleモードのEnemy Classが未設定です。Spawner=%s"), *GetName());
+		return;
+	}
+
+	// [1] 진형 계산 없이 스포너의 위치와 방향을 사용한다.
+	// 陣形計算を行わず、Spawnerの位置と向きを使用する。
+	const FEnemyFormationSlot Slot(GetActorTransform(), 0);
+	FTransform ResolvedSpawnTransform = Slot.WorldTransform;
+
+	// [2] 공통 스폰 처리로 생성하고 위치를 표시한다.
+	// 共通スポーン処理で生成し、位置を表示する。
+	if (SpawnEnemyAtSlot(SingleEnemyClass, Slot, ResolvedSpawnTransform))
+	{
+		DrawDebugSlot(ResolvedSpawnTransform, Slot.SlotIndex);
+	}
+}
+
+void AEnemySpawner::SpawnEnemyGroup()
+{
+	switch (FormationMode)
+	{
+	case EEnemyFormationMode::ByEnemyClass:
+		SpawnByEnemyClass();
+		break;
+
+	case EEnemyFormationMode::CompositeFormation:
+		SpawnByCompositeFormation();
+		break;
+
+	default:
+		break;
+	}
 }
 
 void AEnemySpawner::SpawnByEnemyClass()
@@ -403,38 +452,58 @@ int32 AEnemySpawner::GetTotalSpawnCount(const TArray<FEnemySpawnEntry>& Entries)
 	return TotalCount;
 }
 
-void AEnemySpawner::RegisterSpawnedEnemiesToGroup()
+// ==================================================
+// Encounter Registration
+//
+// 인카운터를 생성하고 스포너가 보관 중인 유효한 적을 등록한다.
+// エンカウンターを生成し、Spawnerが保持する有効な敵を登録する。
+// ==================================================
+void AEnemySpawner::RegisterSpawnedEnemiesToEncounter()
 {
-	if (!EnemyGroupClass)
+	UWorld* World = GetWorld();
+	if (!World)
 	{
-		UE_LOG(LogEnemySpawner, Warning,
-			TEXT("EnemyGroupClassが未設定のためグループを生成できません。Spawner=%s"), *GetName());
 		return;
 	}
 
-	// [1] 그룹이 없으면 스포너 위치에 생성. 이후 스포너는 지휘하지 않는다 —
-	//     교전 상태·그룹 전략은 전부 인카운터의 책임.
-	// グループ未生成なら生成。以後Spawnerは指揮しない。
-	if (!IsValid(SpawnedGroup))
+	// [1] 인카운터가 없으면 생성 완료를 보류한 상태로 생성한다.
+	// エンカウンターがなければ、生成完了を保留した状態で生成する。
+	if (!IsValid(SpawnedEncounter))
 	{
+		const FTransform EncounterTransform = GetActorTransform();
+
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = this;
-		SpawnedGroup = GetWorld()->SpawnActor<AGroupEnemyEncounter>(
-			EnemyGroupClass.Get(), GetActorTransform(), SpawnParams);
+		SpawnParams.bDeferConstruction = true;
+
+		SpawnedEncounter = World->SpawnActor<AEnemyEncounter>(
+			AEnemyEncounter::StaticClass(), EncounterTransform, SpawnParams);
+
+		if (!IsValid(SpawnedEncounter))
+		{
+			UE_LOG(LogEnemySpawner, Warning,
+				TEXT("エンカウンターを生成できませんでした。Spawner=%s"), *GetName());
+			return;
+		}
+
+		// [2] BeginPlay에서 사용할 설정을 전달한 뒤 생성을 완료한다.
+		// BeginPlayで使用する設定を渡してから生成を完了する。
+		SpawnedEncounter->InitializeSettings(EncounterSettings);
+		SpawnedEncounter->FinishSpawning(EncounterTransform);
 	}
 
-	if (!IsValid(SpawnedGroup))
+	if (!IsValid(SpawnedEncounter))
 	{
 		return;
 	}
 
-	// [2] 이번에 스폰된 전원을 등록. 그룹 경계 = 이 스폰 풀 (ADR-0006).
-	// 今回スポーンした全員を登録。グループ境界＝このスポーンプール。
+	// [3] 보관 중인 유효한 적을 등록한다. 등록된 적은 인카운터에서 중복 등록을 방지한다.
+	// 保持している有効な敵を登録する。登録済みの敵はエンカウンター側で重複登録を防ぐ。
 	for (const TObjectPtr<AEnemyCharacter>& Enemy : SpawnedEnemies)
 	{
 		if (IsValid(Enemy))
 		{
-			SpawnedGroup->RegisterMember(Enemy);
+			SpawnedEncounter->RegisterMember(Enemy);
 		}
 	}
 }

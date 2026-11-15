@@ -72,8 +72,8 @@ public:
 	// 現在の隊形モード照会。キャラ側が自分の動作条件の検査に読む。
 	EPartyFormationMode GetFormationMode() const { return CurrentFormationMode; }
 	
-	/** 인지한 적 전체 조회 (유효한 것만). 모드 결정·포메이션·추후 타겟팅이 공유하는 단일 소스. */
-	/** 知覚した敵全体を返す。モード判断・隊形・将来のターゲティングが共有する単一ソース。 */
+	// 인지한 인카운터들의 유효한 적 멤버를 반환한다.
+	// 知覚したエンカウンターの有効な敵メンバーを返す。
 	TArray<AActor*> GetPerceivedEnemies() const;
 	
 	// 전투 진형 컴포넌트 조회. 캐릭터의 홈 슬롯 공급(IHomeSlotProvider)이 커밋 슬롯을 읽을 때 사용.

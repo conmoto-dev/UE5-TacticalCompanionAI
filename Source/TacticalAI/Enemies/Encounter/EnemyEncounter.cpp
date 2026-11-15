@@ -1,4 +1,4 @@
-#include "Enemies/Encounter/EnemyEncounterBase.h"
+#include "Enemies/Encounter/EnemyEncounter.h"
 #include "Characters/EnemyCharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
@@ -12,7 +12,7 @@ static TAutoConsoleVariable<bool> CVarDebugEnemyEncounter(
 	TEXT("TacticalAI.DebugEnemyEncounter"), false,
 	TEXT("Draw enemy encounter origin, member links and state."));
 
-AEnemyEncounterBase::AEnemyEncounterBase()
+AEnemyEncounter::AEnemyEncounter()
 {
 	// Tick은 저주기 감지(내부 누적)와 디버그 표시에 사용한다.
 	// Tickは低頻度感知（内部累積）とデバッグ表示に使用する。
@@ -20,14 +20,21 @@ AEnemyEncounterBase::AEnemyEncounterBase()
 	PrimaryActorTick.bStartWithTickEnabled = true;
 }
 
-void AEnemyEncounterBase::BeginPlay()
+void AEnemyEncounter::InitializeSettings(const FEnemyEncounterSettings& InSettings)
+{
+	Settings = InSettings;
+}
+
+void AEnemyEncounter::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	TimeUntilNextSense = FMath::FRandRange(0.f, SensingInterval);
+	// 전달받은 감지 주기 내에서 첫 감지 시점을 분산한다.
+	// 渡された感知周期内で初回の感知タイミングを分散する。
+	TimeUntilNextSense = FMath::FRandRange(0.f, Settings.SensingInterval);
 }
 
-void AEnemyEncounterBase::Tick(float DeltaTime)
+void AEnemyEncounter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	
@@ -39,27 +46,27 @@ void AEnemyEncounterBase::Tick(float DeltaTime)
 	}
 }
 
-void AEnemyEncounterBase::AddMember(AEnemyCharacter* Member)
+void AEnemyEncounter::RegisterMember(AEnemyCharacter* Member)
 {
 	if (!IsValid(Member) || Members.Contains(Member))
 	{
 		return;
 	}
 
-	// [1] 명부에 추가하고 back-ptr를 꽂는다 (설정 경로는 여기뿐).
-	// 名簿へ追加し、back-ptrを設定（設定経路はここのみ）。
+	// [1] 멤버 목록에 추가하고 적의 소속 인카운터를 설정한다.
+	// メンバー一覧に追加し、敵の所属エンカウンターを設定する。
 	Members.Add(Member);
 	Member->SetEncounter(this);
 
-	// [2] 파괴 통지 구독. 액터 파괴가 바인딩도 함께 정리하므로 개별 해제 불요.
-	// 破壊通知を購読。Actor破壊時にバインドも消えるため個別解除は不要。
-	Member->OnDestroyed.AddDynamic(this, &AEnemyEncounterBase::HandleMemberDestroyed);
+	// [2] 멤버 파괴 시 목록 제거와 전멸 판정을 수행하도록 구독한다.
+	// メンバー破壊時に一覧からの除外と全滅判定を行うため購読する。
+	Member->OnDestroyed.AddDynamic(this, &AEnemyEncounter::HandleMemberDestroyed);
 
 	UE_LOG(LogEnemyEncounter, Log, TEXT("エンカウンターにメンバーを登録しました。Encounter=%s, Member=%s, 現在数=%d"),
 		*GetName(), *GetNameSafe(Member), Members.Num());
 }
 
-TArray<AEnemyCharacter*> AEnemyEncounterBase::GetAliveMembers() const
+TArray<AEnemyCharacter*> AEnemyEncounter::GetAliveMembers() const
 {
 	TArray<AEnemyCharacter*> Result;
 	Result.Reserve(Members.Num());
@@ -73,12 +80,12 @@ TArray<AEnemyCharacter*> AEnemyEncounterBase::GetAliveMembers() const
 	return Result;
 }
 
-bool AEnemyEncounterBase::IsDefeated() const
+bool AEnemyEncounter::IsDefeated() const
 {
 	return GetAliveMembers().Num() == 0;
 }
 
-void AEnemyEncounterBase::HandleMemberDestroyed(AActor* DestroyedActor)
+void AEnemyEncounter::HandleMemberDestroyed(AActor* DestroyedActor)
 {
 	// [1] 레벨 종료 중의 연쇄 파괴에서는 전멸 통지를 쏘지 않는다.
 	// レベル終了中の連鎖破壊では全滅通知を出さない。
@@ -99,7 +106,7 @@ void AEnemyEncounterBase::HandleMemberDestroyed(AActor* DestroyedActor)
 	}
 }
 
-void AEnemyEncounterBase::DrawDebugEncounter() const
+void AEnemyEncounter::DrawDebugEncounter() const
 {
 	const FVector Origin = GetActorLocation();
 	DrawDebugSphere(GetWorld(), Origin, 40.f, 8, FColor::Red, false, -1.f);
@@ -117,14 +124,14 @@ void AEnemyEncounterBase::DrawDebugEncounter() const
 		UEnum::GetValueAsString(EncounterState), nullptr, StateColors[EncounterState], 0.f);
 }
 
-void AEnemyEncounterBase::TickSensing(float DeltaTime)
+void AEnemyEncounter::TickSensing(float DeltaTime)
 {
 	TimeUntilNextSense -= DeltaTime;
 	if (TimeUntilNextSense > 0.f || IsDefeated())
 	{
 		return;
 	}
-	TimeUntilNextSense = SensingInterval;
+	TimeUntilNextSense = Settings.SensingInterval;
 
 	// [1] 감지 대상 = 플레이어 폰 (엔진 API — 파티 타입 의존 없음, ADR-0008 의존 방향 유지).
 	//     전투 시작·이탈이 플레이어 기준이라는 파티 측 규칙과 대칭.
@@ -156,32 +163,32 @@ void AEnemyEncounterBase::TickSensing(float DeltaTime)
 	
 	// [3] 상태별 전이 판정. Exit < Enter 설정 실수는 Enter 거리로 방어.
 	// 状態別の遷移判定。Exit<Enterの設定ミスはEnter距離で防御。
-	const float SafeAlertExit = FMath::Max(AlertExitDistance, AlertEnterDistance);
+	const float SafeAlertExit = FMath::Max(Settings.AlertExitDistance, Settings.AlertEnterDistance);
 
 	switch (EncounterState)
 	{
 	case EEnemyEncounterState::Idle:
-		if (DistToNearestMember <= AlertEnterDistance) SetEncounterState(EEnemyEncounterState::Alert);
+		if (DistToNearestMember <= Settings.AlertEnterDistance) SetEncounterState(EEnemyEncounterState::Alert);
 		break;
 
 	case EEnemyEncounterState::Alert:
-		if (DistToNearestMember <= EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
+		if (DistToNearestMember <= Settings.EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
 		else if (DistToNearestMember > SafeAlertExit)  SetEncounterState(EEnemyEncounterState::Idle);
 		break;
 
 	case EEnemyEncounterState::Engaged:
 		// 追跡諦めのみアンカー基準。
-		if (DistToAnchor > ChaseGiveUpDistance)        SetEncounterState(EEnemyEncounterState::Return);
+		if (DistToAnchor > Settings.ChaseGiveUpDistance)        SetEncounterState(EEnemyEncounterState::Return);
 		break;
 
 	case EEnemyEncounterState::Return:
-		if (DistToNearestMember <= EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
+		if (DistToNearestMember <= Settings.EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
 		else if (AreAllMembersNearAnchor())            SetEncounterState(EEnemyEncounterState::Idle);
 		break;
 	}
 }
 
-void AEnemyEncounterBase::NotifyAttackedBy(AActor* Attacker)
+void AEnemyEncounter::NotifyAttackedBy(AActor* Attacker)
 {
 	// 인카운터 일원이 피격당하면 어느 상태에서든 즉시 교전.
 	// どの状態からでも即時交戦へ。
@@ -194,7 +201,7 @@ void AEnemyEncounterBase::NotifyAttackedBy(AActor* Attacker)
 	SetEncounterState(EEnemyEncounterState::Engaged);
 }
 
-void AEnemyEncounterBase::SetEncounterState(const EEnemyEncounterState NewState)
+void AEnemyEncounter::SetEncounterState(const EEnemyEncounterState NewState)
 {
 	if (EncounterState == NewState)
 	{
@@ -221,17 +228,17 @@ void AEnemyEncounterBase::SetEncounterState(const EEnemyEncounterState NewState)
 	OnEncounterStateChanged.Broadcast(this, OldState, NewState);
 }
 
-const APawn* AEnemyEncounterBase::GetSensedPlayerPawn() const
+const APawn* AEnemyEncounter::GetSensedPlayerPawn() const
 {
 	return UGameplayStatics::GetPlayerPawn(this, 0);
 }
 
-bool AEnemyEncounterBase::AreAllMembersNearAnchor() const
+bool AEnemyEncounter::AreAllMembersNearAnchor() const
 {
 	const FVector Anchor = GetActorLocation();
 	for (const AEnemyCharacter* Member : GetAliveMembers())
 	{
-		if (FVector::Dist(Anchor, Member->GetActorLocation()) > ReturnHomeRadius)
+		if (FVector::Dist(Anchor, Member->GetActorLocation()) > Settings.ReturnHomeRadius)
 		{
 			return false;
 		}
@@ -239,7 +246,7 @@ bool AEnemyEncounterBase::AreAllMembersNearAnchor() const
 	return true;
 }
 
-void AEnemyEncounterBase::RefreshKnownHostiles()
+void AEnemyEncounter::RefreshKnownHostiles()
 {
 	KnownHostiles.Reset();
 
@@ -255,7 +262,7 @@ void AEnemyEncounterBase::RefreshKnownHostiles()
 	}
 }
 
-TArray<AActor*> AEnemyEncounterBase::GetKnownHostiles() const
+TArray<AActor*> AEnemyEncounter::GetKnownHostiles() const
 {
 	// Engaged 게이트 + 유효성 필터. 자격(IsTargetable) 필터는 셀렉터 베이스의 몫.
 	// Engagedゲート＋有効性フィルタ。ターゲット可能資格フィルタ(IsTargetable)はセレクタ基底の責務。

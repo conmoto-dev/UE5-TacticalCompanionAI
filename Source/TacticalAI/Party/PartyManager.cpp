@@ -1,7 +1,7 @@
 #include "Party/PartyManager.h"
 #include "Party/PartyPerceptionComponent.h"
 #include "Characters/PartyCharacter.h"
-#include "Enemies/Encounter/EnemyEncounterBase.h"
+#include "Enemies/Encounter/EnemyEncounter.h"
 #include "Characters/EnemyCharacter.h"
 #include "AI/Components/FormationFollowComponent.h"
 #include "AI/Components/FormationBattleComponent.h"
@@ -88,11 +88,10 @@ TArray<APartyCharacter*> APartyManager::GetFollowers() const
 
 TArray<AActor*> APartyManager::GetPerceivedEnemies() const
 {
-	// 인지된 인카운터별 생존 멤버를 하나의 배열로 모은다. 
-	// 호출자(모드 결정·Formation)는 이 변경을 모른다.
-	// 知覚エンカウンターごとの生存メンバーを一つの配列にまとめる。
+	// 인지한 인카운터의 유효한 멤버를 하나의 배열로 모은다.
+	// 知覚したエンカウンターの有効なメンバーを一つの配列にまとめる。
 	TArray<AActor*> Result;
-	for (const AEnemyEncounterBase* Encounter : PerceptionComponent->GetPerceivedEncounters())
+	for (const AEnemyEncounter* Encounter : PerceptionComponent->GetPerceivedEncounters())
 	{
 		for (AEnemyCharacter* Member : Encounter->GetAliveMembers())
 		{
@@ -134,9 +133,8 @@ void APartyManager::TickModeDecision()
 		bAnyEnemy = true;
 	}
 
-	// [2] 인지 적 0명 = 전투 이탈. 
-	//     인지 거리 밖으로 이탈이 아닌 전투 중 적 전멸로 인한 전투 이탈. 
-	// 知覚敵0＝戦闘離脱確定。全滅・知覚解除は距離ヒステリシスの外の条件。
+	// [2] 인지한 적이 없으면 Follow로 전환한다. 전멸과 인지 범위 이탈을 모두 포함한다.
+	// 知覚した敵がいなければFollowへ切り替える。全滅と知覚範囲からの離脱を含む。
 	if (!bAnyEnemy)
 	{
 		SetFormationMode(EPartyFormationMode::Follow);

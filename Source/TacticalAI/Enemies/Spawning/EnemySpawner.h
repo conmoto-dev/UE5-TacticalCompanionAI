@@ -3,19 +3,33 @@
 #include "CoreMinimal.h"
 #include "Enemies/Formation/EnemyFormationTypes.h"
 #include "Enemies/Formation/EnemySubFormationBase.h"
+#include "Enemies/Encounter/EnemyEncounterSettings.h"
 #include "GameFramework/Actor.h"
 #include "EnemySpawner.generated.h"
 
 class AEnemyCharacter;
-class AGroupEnemyEncounter;
+class AEnemyEncounter;
 class UArrowComponent;
 class USceneComponent;
+
+// ==================================================
+// Enemy Spawn Mode
+//
+// 단일 적 생성 또는 그룹 생성을 선택한다.
+// 単体の敵生成またはグループ生成を選択する。
+// ==================================================
+UENUM(BlueprintType)
+enum class EEnemySpawnMode : uint8
+{
+	Group UMETA(DisplayName = "Group"),
+	Single UMETA(DisplayName = "Single")
+};
 
 // =========================================================================
 // Enemy Spawner
 //
-// 적 그룹의 초기 스폰과 Formation 배치를 관리하는 Actor.
-// 敵グループの初期スポーンとFormation配置を管理するActor。
+// 적의 단일·그룹 생성과 초기 배치를 관리하는 Actor.
+// 敵の単体・グループ生成と初期配置を管理するActor。
 // =========================================================================
 UCLASS(Blueprintable)
 class TACTICALAI_API AEnemySpawner : public AActor
@@ -35,6 +49,8 @@ public:
 
 private:
 	void SpawnByEnemyClass();
+	void SpawnSingleEnemy();
+	void SpawnEnemyGroup();
 	void SpawnByCompositeFormation();
 
 	TArray<FEnemyFormationSlot> BuildFallbackSlots(int32 SlotCount) const;
@@ -67,7 +83,7 @@ private:
 
 	int32 GetTotalSpawnCount(const TArray<FEnemySpawnEntry>& Entries) const;
 
-	void RegisterSpawnedEnemiesToGroup();
+	void RegisterSpawnedEnemiesToEncounter();
 
 	
 private:
@@ -91,43 +107,67 @@ private:
 		meta = (AllowPrivateAccess = "true", DisplayName = "Spawn On BeginPlay"))
 	bool bSpawnOnBeginPlay = true;
 
-	// 적의 초기 Formation 배치 모드.
-	// 敵の初期Formation配置モード。
+	// 단일 적 생성 또는 그룹 생성. Group은 기존 Formation 설정을 사용한다.
+	// 単体生成またはグループ生成。Groupでは既存のFormation設定を使用する。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
-		meta = (AllowPrivateAccess = "true", DisplayName = "Formation Mode"))
-	EEnemyFormationMode FormationMode = EEnemyFormationMode::ByEnemyClass;
+		meta = (AllowPrivateAccess = "true", DisplayName = "Spawn Mode"))
+	EEnemySpawnMode SpawnMode = EEnemySpawnMode::Group;
 
-	// ByEnemyClass 모드에서 사용할 기본 스폰 목록.
-	// ByEnemyClassモードで使用する基本スポーンリスト。
+	// Single 모드에서 생성할 적 클래스. 생성 요청마다 단일 적을 생성한다.
+	// Singleモードで生成する敵クラス。生成要求ごとに敵単体生成する。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
 		meta = (
 			AllowPrivateAccess = "true",
-			EditCondition = "FormationMode == EEnemyFormationMode::ByEnemyClass",
+			EditCondition = "SpawnMode == EEnemySpawnMode::Single",
+			EditConditionHides,
+			DisplayName = "Enemy Class"))
+	TSubclassOf<AEnemyCharacter> SingleEnemyClass = nullptr;
+
+	// 그룹으로 생성할 적들의 초기 배치 방식.
+	// グループとして生成する敵の初期配置方式。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
+		meta = (
+			AllowPrivateAccess = "true",
+			EditCondition = "SpawnMode == EEnemySpawnMode::Group",
+			EditConditionHides,
+			DisplayName = "Formation Mode"))
+	EEnemyFormationMode FormationMode = EEnemyFormationMode::ByEnemyClass;
+
+	// Group의 ByEnemyClass 방식에서 사용할 스폰 목록.
+	// GroupのByEnemyClass方式で使用するスポーンリスト。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
+		meta = (
+			AllowPrivateAccess = "true",
+			EditCondition = "SpawnMode == EEnemySpawnMode::Group && FormationMode == EEnemyFormationMode::ByEnemyClass",
 			EditConditionHides,
 			DisplayName = "Spawn Entries"))
 	TArray<FEnemySpawnEntry> SpawnEntries;
 
-	// Spawner 안에서 직접 편집하는 복합 Formation.
-	// Spawner内で直接編集する複合Formation。
+	// Group의 CompositeFormation 방식에서 직접 편집하는 복합 진형.
+	// GroupのCompositeFormation方式で直接編集する複合陣形。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
 		meta = (
 			AllowPrivateAccess = "true",
-			EditCondition = "FormationMode == EEnemyFormationMode::CompositeFormation",
+			EditCondition = "SpawnMode == EEnemySpawnMode::Group && FormationMode == EEnemyFormationMode::CompositeFormation",
 			EditConditionHides,
 			DisplayName = "Composite Formation"))
 	FEnemyCompositeFormation CompositeFormation;
 
-	// 스폰될 그룹 인카운터의 클래스. 경계 거리 등을 튜닝한 BP 그룹을 지점별로 선택.
-	// 生成されるグループエンカウンターのクラス。調整済みBPグループを地点ごとに選択可能。
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
-		meta = (AllowPrivateAccess = "true", DisplayName = "Enemy Group Class"))
-	TSubclassOf<AGroupEnemyEncounter> EnemyGroupClass;
+	// ==================================================
+	// Encounter
+	// ==================================================
 
-	// 이 스포너가 만든 그룹 인카운터. 
-	// このSpawnerが生成したグループエンカウンター。
-	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Enemy Spawn",
+	// 인카운터 생성 시 전달할 교전 설정. Single과 Group에 공통으로 적용한다.
+	// エンカウンター生成時に渡す交戦設定。SingleとGroupに共通で適用する。
+	UPROPERTY(EditAnywhere, Category = "Enemy Encounter",
+		meta = (DisplayName = "Encounter Settings"))
+	FEnemyEncounterSettings EncounterSettings;
+
+	// 이 스포너가 생성한 인카운터. 추가 생성한 적도 같은 인카운터에 등록한다.
+	// このSpawnerが生成したエンカウンター。追加生成した敵も同じエンカウンターに登録する。
+	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Enemy Encounter",
 		meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<AGroupEnemyEncounter> SpawnedGroup = nullptr;
+	TObjectPtr<AEnemyEncounter> SpawnedEncounter = nullptr;
 	
 	// =========================================================================
 	// Spawn Resolve
@@ -177,10 +217,15 @@ private:
 		meta = (AllowPrivateAccess = "true", DisplayName = "Destroy Previous Spawned Enemies"))
 	bool bDestroyPreviousSpawnedEnemies = true;
 
-	// ByEnemyClass 모드에서 임시 배치 슬롯 사이에 둘 간격.
-	// ByEnemyClassモードで仮配置スロット同士の間に置く間隔。
+	// Group의 ByEnemyClass 방식에서 배치 슬롯 사이에 둘 간격.
+	// GroupのByEnemyClass方式で配置スロット間に設ける間隔。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Debug",
-		meta = (AllowPrivateAccess = "true", ClampMin = "0.0", DisplayName = "Fallback Spawn Spacing"))
+		meta = (
+			AllowPrivateAccess = "true",
+			EditCondition = "SpawnMode == EEnemySpawnMode::Group && FormationMode == EEnemyFormationMode::ByEnemyClass",
+			EditConditionHides,
+			ClampMin = "0.0",
+			DisplayName = "Fallback Spawn Spacing"))
 	float FallbackSpawnSpacing = 150.0f;
 
 	// 슬롯 디버그 표시를 활성화할지 여부.

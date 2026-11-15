@@ -6,7 +6,7 @@
 #include "EnemyCharacter.generated.h"
 
 class UEnemyFormationStrategy;
-class AEnemyEncounterBase;
+class AEnemyEncounter;
 class UEnemyTargetSelectorComponent;
 class UTargetSelectorComponent;
 
@@ -22,15 +22,17 @@ class TACTICALAI_API AEnemyCharacter : public ATacticalCharacterBase
 public:
 	AEnemyCharacter();
 
-	// =========================================================================
-	// 소속 인카운터 역방향 포인터.
-	// 적 셀렉터·행동 계층이 소속 인카운터의 교전 상태와 알려진 적을 읽기 위해 둔다.
+	// ==================================================
+	// Encounter Membership
 	//
-	// 所属エンカウンターへの逆参照ポインタ。
-	// 敵セレクタ・行動レイヤーが所属エンカウンターの交戦状態と既知敵を読むために置く。
-	// =========================================================================
-	void SetEncounter(AEnemyEncounterBase* InEncounter);
-	AEnemyEncounterBase* GetEncounter() const;
+	// 인카운터의 멤버 등록 처리에서 소속을 설정한다.
+	// 적 타겟 셀렉터와 행동 처리는 소속 인카운터를 조회한다.
+	//
+	// エンカウンターのメンバー登録処理で所属を設定する。
+	// 敵ターゲットセレクタと行動処理は所属エンカウンターを参照する。
+	// ==================================================
+	void SetEncounter(AEnemyEncounter* InEncounter);
+	AEnemyEncounter* GetEncounter() const;
 	
 	// =========================================================================
 	// 개별 공격 행동에서 참고할 선호 교전 사거리.
@@ -78,7 +80,9 @@ protected:
 	
 private:
 	
-	TWeakObjectPtr<AEnemyEncounterBase> OwningEncounter;
+	// 소속 인카운터의 약참조. 인카운터가 유효하지 않으면 조회 시 nullptr를 반환한다.
+	// 所属エンカウンターへの弱参照。有効でない場合、取得時にnullptrを返す。
+	TWeakObjectPtr<AEnemyEncounter> OwningEncounter;
 	
 	// =========================================================================
 	// 적 종류의 전투 성향.

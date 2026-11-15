@@ -1,7 +1,7 @@
 #include "Party/PartyPerceptionComponent.h"
 #include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
-#include "Enemies/Encounter/EnemyEncounterBase.h"
+#include "Enemies/Encounter/EnemyEncounter.h"
 #include "Characters/EnemyCharacter.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -37,13 +37,13 @@ void UPartyPerceptionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	ScanForEncounters();
 }
 
-TArray<AEnemyEncounterBase*> UPartyPerceptionComponent::GetPerceivedEncounters() const
+TArray<AEnemyEncounter*> UPartyPerceptionComponent::GetPerceivedEncounters() const
 {
-	TArray<AEnemyEncounterBase*> Result;
+	TArray<AEnemyEncounter*> Result;
 	Result.Reserve(PerceivedEncounters.Num());
-	for (const TWeakObjectPtr<AEnemyEncounterBase>& Weak : PerceivedEncounters)
+	for (const TWeakObjectPtr<AEnemyEncounter>& Weak : PerceivedEncounters)
 	{
-		AEnemyEncounterBase* Encounter = Weak.Get();
+		AEnemyEncounter* Encounter = Weak.Get();
 		if (Encounter && !Encounter->IsDefeated())
 		{
 			Result.Add(Encounter);
@@ -52,7 +52,7 @@ TArray<AEnemyEncounterBase*> UPartyPerceptionComponent::GetPerceivedEncounters()
 	return Result;
 }
 
-void UPartyPerceptionComponent::MarkEncounterPerceived(AEnemyEncounterBase* Encounter)
+void UPartyPerceptionComponent::MarkEncounterPerceived(AEnemyEncounter* Encounter)
 {
 	if (!IsValid(Encounter) || PerceivedEncounters.Contains(Encounter))
 	{
@@ -77,7 +77,7 @@ void UPartyPerceptionComponent::ScanForEncounters()
 	// 離脱判定：知覚中エンカウンターが全員Exit半径外なら解除。無効・全滅もここで掃除。
 	for (int32 i = PerceivedEncounters.Num() - 1; i >= 0; --i)
 	{
-		AEnemyEncounterBase* Encounter = PerceivedEncounters[i].Get();
+		AEnemyEncounter* Encounter = PerceivedEncounters[i].Get();
 		if (!Encounter || Encounter->IsDefeated() || !IsAnyMemberInRadius(Encounter, Origin, ExitRadiusSq))
 		{
 			if (Encounter)
@@ -88,13 +88,11 @@ void UPartyPerceptionComponent::ScanForEncounters()
 		}
 	}
 
-	// [2] 진입 판정: 미인지 인카운터 중 1체라도 Enter 반경 안이면 인카운터 전체 인지
-	//     인카운터 수는 스폰 지점·배치 규모라 전체 순회로 충분 — LOD 도입 시 내부만 교체.
-	// 進入判定：未知覚エンカウンターの1体でもEnter半径内なら全体を知覚。
-	// 基底型で走査するため、系統に関係なく同じ判定。
-	for (TActorIterator<AEnemyEncounterBase> It(GetWorld()); It; ++It)
+	// [2] 미인지 인카운터의 멤버 중 하나라도 진입 반경 안에 있으면 같은 소속 적 전체를 인지한다.
+	// 未知覚のエンカウンターのメンバー1体でも開始半径内にいれば知覚する。
+	for (TActorIterator<AEnemyEncounter> It(GetWorld()); It; ++It)
 	{
-		AEnemyEncounterBase* Encounter = *It;
+		AEnemyEncounter* Encounter = *It;
 		if (Encounter->IsDefeated() || PerceivedEncounters.Contains(Encounter)) continue;
 
 		if (IsAnyMemberInRadius(Encounter, Origin, EnterRadiusSq))
@@ -106,7 +104,7 @@ void UPartyPerceptionComponent::ScanForEncounters()
 	DrawDebugPerception(Origin);
 }
 
-bool UPartyPerceptionComponent::IsAnyMemberInRadius(const AEnemyEncounterBase* Encounter,
+bool UPartyPerceptionComponent::IsAnyMemberInRadius(const AEnemyEncounter* Encounter,
 	const FVector& Origin, const float RadiusSq) const
 {
 	for (const AEnemyCharacter* Member : Encounter->GetAliveMembers())
@@ -133,7 +131,7 @@ void UPartyPerceptionComponent::DrawDebugPerception(const FVector& Origin) const
 		false, ScanInterval, 0, 2.f, FVector::RightVector, FVector::ForwardVector, false);
 	DrawDebugCircle(GetWorld(), Origin, PerceiveExitRadius, 48, FColor::Yellow,
 		false, ScanInterval, 0, 2.f, FVector::RightVector, FVector::ForwardVector, false);
-	for (const AEnemyEncounterBase* Encounter : GetPerceivedEncounters())
+	for (const AEnemyEncounter* Encounter : GetPerceivedEncounters())
 	{
 		DrawDebugLine(GetWorld(), Origin, Encounter->GetActorLocation(),
 			FColor::Green, false, ScanInterval, 0, 2.f);
