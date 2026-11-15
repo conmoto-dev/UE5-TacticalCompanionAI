@@ -42,7 +42,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyEncounterDefeated, AEnemyEnc
 // 単体の敵とグループの敵は同じ登録処理と交戦処理を使用する。
 // パーティ知覚と敵ターゲッティングはこのエンカウンターを参照する。
 // ==================================================
-UCLASS(Abstract, Blueprintable)
+UCLASS(NotBlueprintable, NotPlaceable)
 class TACTICALAI_API AEnemyEncounter : public AInfo
 {
 	GENERATED_BODY()
