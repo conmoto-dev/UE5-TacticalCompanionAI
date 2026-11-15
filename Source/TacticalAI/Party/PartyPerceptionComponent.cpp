@@ -1,7 +1,7 @@
 #include "Party/PartyPerceptionComponent.h"
 #include "Party/PartyManager.h"
 #include "Characters/PartyCharacter.h"
-#include "Enemies/Group/EnemyGroup.h"
+#include "Enemies/Encounter/EnemyEncounterBase.h"
 #include "Characters/EnemyCharacter.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -12,7 +12,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPartyPerception, Log, All);
 // パーティ知覚のデバッグ表示。コンソール: TacticalAI.DebugPartyPerception 1
 static TAutoConsoleVariable<bool> CVarDebugPartyPerception(
 	TEXT("TacticalAI.DebugPartyPerception"), false,
-	TEXT("Draw perception radii and lines to perceived groups."));
+	TEXT("Draw perception radii and lines to perceived encounters."));
 
 UPartyPerceptionComponent::UPartyPerceptionComponent()
 {
@@ -34,35 +34,35 @@ void UPartyPerceptionComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	ScanForGroups();
+	ScanForEncounters();
 }
 
-TArray<AEnemyGroup*> UPartyPerceptionComponent::GetPerceivedGroups() const
+TArray<AEnemyEncounterBase*> UPartyPerceptionComponent::GetPerceivedEncounters() const
 {
-	TArray<AEnemyGroup*> Result;
-	Result.Reserve(PerceivedGroups.Num());
-	for (const TWeakObjectPtr<AEnemyGroup>& Weak : PerceivedGroups)
+	TArray<AEnemyEncounterBase*> Result;
+	Result.Reserve(PerceivedEncounters.Num());
+	for (const TWeakObjectPtr<AEnemyEncounterBase>& Weak : PerceivedEncounters)
 	{
-		AEnemyGroup* Group = Weak.Get();
-		if (Group && !Group->IsDefeated())
+		AEnemyEncounterBase* Encounter = Weak.Get();
+		if (Encounter && !Encounter->IsDefeated())
 		{
-			Result.Add(Group);
+			Result.Add(Encounter);
 		}
 	}
 	return Result;
 }
 
-void UPartyPerceptionComponent::MarkGroupPerceived(AEnemyGroup* Group)
+void UPartyPerceptionComponent::MarkEncounterPerceived(AEnemyEncounterBase* Encounter)
 {
-	if (!IsValid(Group) || PerceivedGroups.Contains(Group))
+	if (!IsValid(Encounter) || PerceivedEncounters.Contains(Encounter))
 	{
 		return;
 	}
-	PerceivedGroups.Add(Group);
-	UE_LOG(LogPartyPerception, Log, TEXT("敵グループを知覚しました。Group=%s"), *GetNameSafe(Group));
+	PerceivedEncounters.Add(Encounter);
+	UE_LOG(LogPartyPerception, Log, TEXT("敵エンカウンターを知覚しました。Encounter=%s"), *GetNameSafe(Encounter));
 }
 
-void UPartyPerceptionComponent::ScanForGroups()
+void UPartyPerceptionComponent::ScanForEncounters()
 {
 	const APartyCharacter* Leader = GetLeader();
 	if (!Leader) return;
@@ -73,42 +73,43 @@ void UPartyPerceptionComponent::ScanForGroups()
 	// Exit < Enter の設定ミスでも最低Enter距離は保証。
 	const float ExitRadiusSq = FMath::Square(FMath::Max(PerceiveExitRadius, PerceiveEnterRadius));
 
-	// [1] 이탈 판정: 인지 중인 그룹이 전원 Exit 반경 밖이면 해제. 무효·전멸도 함께 정리.
-	// 離脱判定：知覚中グループが全員Exit半径外なら解除。無効・全滅もここで掃除。
-	for (int32 i = PerceivedGroups.Num() - 1; i >= 0; --i)
+	// [1] 이탈 판정: 인지 중인 인카운터가 전원 Exit 반경 밖이면 해제. 무효·전멸도 함께 정리.
+	// 離脱判定：知覚中エンカウンターが全員Exit半径外なら解除。無効・全滅もここで掃除。
+	for (int32 i = PerceivedEncounters.Num() - 1; i >= 0; --i)
 	{
-		AEnemyGroup* Group = PerceivedGroups[i].Get();
-		if (!Group || Group->IsDefeated() || !IsAnyMemberInRadius(Group, Origin, ExitRadiusSq))
+		AEnemyEncounterBase* Encounter = PerceivedEncounters[i].Get();
+		if (!Encounter || Encounter->IsDefeated() || !IsAnyMemberInRadius(Encounter, Origin, ExitRadiusSq))
 		{
-			if (Group)
+			if (Encounter)
 			{
-				UE_LOG(LogPartyPerception, Log, TEXT("敵グループの知覚を解除しました。Group=%s"), *GetNameSafe(Group));
+				UE_LOG(LogPartyPerception, Log, TEXT("敵エンカウンターの知覚を解除しました。Encounter=%s"), *GetNameSafe(Encounter));
 			}
-			PerceivedGroups.RemoveAt(i);
+			PerceivedEncounters.RemoveAt(i);
 		}
 	}
 
-	// [2] 진입 판정: 미인지 그룹 중 1체라도 Enter 반경 안이면 그룹 전체 인지.
-	//     그룹 수는 스폰 지점 규모라 전체 순회로 충분 — LOD 도입 시 내부만 교체.
-	// 進入判定：未知覚グループの1体でもEnter半径内なら全体を知覚。
-	for (TActorIterator<AEnemyGroup> It(GetWorld()); It; ++It)
+	// [2] 진입 판정: 미인지 인카운터 중 1체라도 Enter 반경 안이면 인카운터 전체 인지
+	//     인카운터 수는 스폰 지점·배치 규모라 전체 순회로 충분 — LOD 도입 시 내부만 교체.
+	// 進入判定：未知覚エンカウンターの1体でもEnter半径内なら全体を知覚。
+	// 基底型で走査するため、系統に関係なく同じ判定。
+	for (TActorIterator<AEnemyEncounterBase> It(GetWorld()); It; ++It)
 	{
-		AEnemyGroup* Group = *It;
-		if (Group->IsDefeated() || PerceivedGroups.Contains(Group)) continue;
+		AEnemyEncounterBase* Encounter = *It;
+		if (Encounter->IsDefeated() || PerceivedEncounters.Contains(Encounter)) continue;
 
-		if (IsAnyMemberInRadius(Group, Origin, EnterRadiusSq))
+		if (IsAnyMemberInRadius(Encounter, Origin, EnterRadiusSq))
 		{
-			MarkGroupPerceived(Group);
+			MarkEncounterPerceived(Encounter);
 		}
 	}
 
 	DrawDebugPerception(Origin);
 }
 
-bool UPartyPerceptionComponent::IsAnyMemberInRadius(const AEnemyGroup* Group,
+bool UPartyPerceptionComponent::IsAnyMemberInRadius(const AEnemyEncounterBase* Encounter,
 	const FVector& Origin, const float RadiusSq) const
 {
-	for (const AEnemyCharacter* Member : Group->GetAliveMembers())
+	for (const AEnemyCharacter* Member : Encounter->GetAliveMembers())
 	{
 		if (FVector::DistSquared(Origin, Member->GetActorLocation()) <= RadiusSq)
 		{
@@ -132,9 +133,9 @@ void UPartyPerceptionComponent::DrawDebugPerception(const FVector& Origin) const
 		false, ScanInterval, 0, 2.f, FVector::RightVector, FVector::ForwardVector, false);
 	DrawDebugCircle(GetWorld(), Origin, PerceiveExitRadius, 48, FColor::Yellow,
 		false, ScanInterval, 0, 2.f, FVector::RightVector, FVector::ForwardVector, false);
-	for (const AEnemyGroup* Group : GetPerceivedGroups())
+	for (const AEnemyEncounterBase* Encounter : GetPerceivedEncounters())
 	{
-		DrawDebugLine(GetWorld(), Origin, Group->GetActorLocation(),
+		DrawDebugLine(GetWorld(), Origin, Encounter->GetActorLocation(),
 			FColor::Green, false, ScanInterval, 0, 2.f);
 	}
 }

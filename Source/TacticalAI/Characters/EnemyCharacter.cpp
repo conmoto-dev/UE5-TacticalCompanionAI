@@ -1,5 +1,5 @@
 #include "Characters/EnemyCharacter.h"
-#include "Enemies/Group/EnemyGroup.h"
+#include "Enemies/Encounter/EnemyEncounterBase.h"
 #include "AI/Targeting/EnemyTargetSelectorComponent.h"
 
 AEnemyCharacter::AEnemyCharacter()
@@ -14,11 +14,11 @@ AEnemyCharacter::AEnemyCharacter()
 	TargetSelector = CreateDefaultSubobject<UEnemyTargetSelectorComponent>(TEXT("TargetSelector"));
 }
 
-void AEnemyCharacter::SetEnemyGroup(AEnemyGroup* InGroup)
-{ OwningGroup = InGroup; }
+void AEnemyCharacter::SetEncounter(AEnemyEncounterBase* InEncounter)
+{ OwningEncounter = InEncounter; }
 
-AEnemyGroup* AEnemyCharacter::GetEnemyGroup() const
-{ return OwningGroup.Get(); }
+AEnemyEncounterBase* AEnemyCharacter::GetEncounter() const
+{ return OwningEncounter.Get(); }
 
 UTargetSelectorComponent* AEnemyCharacter::GetTargetSelector() const 
 { return TargetSelector; }

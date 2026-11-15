@@ -1,5 +1,5 @@
 #include "Enemies/Spawning/EnemySpawner.h"
-#include "Enemies/Group/EnemyGroup.h"
+#include "Enemies/Encounter/GroupEnemyEncounter.h"
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -21,7 +21,7 @@ AEnemySpawner::AEnemySpawner()
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
 
-	EnemyGroupClass = AEnemyGroup::StaticClass();
+	EnemyGroupClass = AGroupEnemyEncounter::StaticClass();
 	
 #if WITH_EDITORONLY_DATA
 	EditorArrow = CreateEditorOnlyDefaultSubobject<UArrowComponent>(TEXT("EditorArrow"));
@@ -413,13 +413,13 @@ void AEnemySpawner::RegisterSpawnedEnemiesToGroup()
 	}
 
 	// [1] 그룹이 없으면 스포너 위치에 생성. 이후 스포너는 지휘하지 않는다 —
-	//     그룹 상태·전략은 전부 AEnemyGroup의 책임 (스포너는 공장까지만).
-	// グループ未生成なら生成。以後Spawnerは指揮しない（工場まで）。
+	//     교전 상태·그룹 전략은 전부 인카운터의 책임.
+	// グループ未生成なら生成。以後Spawnerは指揮しない。
 	if (!IsValid(SpawnedGroup))
 	{
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.Owner = this;
-		SpawnedGroup = GetWorld()->SpawnActor<AEnemyGroup>(
+		SpawnedGroup = GetWorld()->SpawnActor<AGroupEnemyEncounter>(
 			EnemyGroupClass.Get(), GetActorTransform(), SpawnParams);
 	}
 

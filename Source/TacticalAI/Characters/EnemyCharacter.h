@@ -6,7 +6,7 @@
 #include "EnemyCharacter.generated.h"
 
 class UEnemyFormationStrategy;
-class AEnemyGroup;
+class AEnemyEncounterBase;
 class UEnemyTargetSelectorComponent;
 class UTargetSelectorComponent;
 
@@ -23,15 +23,14 @@ public:
 	AEnemyCharacter();
 
 	// =========================================================================
-	// 소속 그룹 back-ptr.
-	// 소유가 아니므로 TWeakObjectPtr — 그룹이 먼저 사라져도 자동 무효화.
-	// 설정은 AEnemyGroup::RegisterMember 경유만 (캐릭터가 스스로 정하지 않음).
+	// 소속 인카운터 역방향 포인터.
+	// 적 셀렉터·행동 계층이 소속 인카운터의 교전 상태와 알려진 적을 읽기 위해 둔다.
 	//
-	// 所属グループへのback-ptr。所有ではないためTWeakObjectPtr。
-	// 設定はRegisterMember経由のみ（キャラ側では決めない）。
+	// 所属エンカウンターへの逆参照ポインタ。
+	// 敵セレクタ・行動レイヤーが所属エンカウンターの交戦状態と既知敵を読むために置く。
 	// =========================================================================
-	void SetEnemyGroup(AEnemyGroup* InGroup);
-	AEnemyGroup* GetEnemyGroup() const;
+	void SetEncounter(AEnemyEncounterBase* InEncounter);
+	AEnemyEncounterBase* GetEncounter() const;
 	
 	// =========================================================================
 	// 개별 공격 행동에서 참고할 선호 교전 사거리.
@@ -79,7 +78,7 @@ protected:
 	
 private:
 	
-	TWeakObjectPtr<AEnemyGroup> OwningGroup;
+	TWeakObjectPtr<AEnemyEncounterBase> OwningEncounter;
 	
 	// =========================================================================
 	// 적 종류의 전투 성향.

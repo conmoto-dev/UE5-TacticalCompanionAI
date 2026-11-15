@@ -76,9 +76,6 @@ public:
 	/** 知覚した敵全体を返す。モード判断・隊形・将来のターゲティングが共有する単一ソース。 */
 	TArray<AActor*> GetPerceivedEnemies() const;
 	
-	// public 게터 추가 (추후 타겟 시스템이 그룹 단위 조회할 창구):
-	UPartyPerceptionComponent* GetPerception() const { return PerceptionComponent; }
-	
 	// 전투 진형 컴포넌트 조회. 캐릭터의 홈 슬롯 공급(IHomeSlotProvider)이 커밋 슬롯을 읽을 때 사용.
 	// 戦闘隊形コンポーネント照会。キャラのホームスロット供給がコミットスロットを読む際に使用。
 	UFormationBattleComponent* GetFormationBattleComponent() const { return BattleComponent; }
@@ -94,8 +91,8 @@ protected:
 	
 	/** Detect Battle State by Leader - Nearest Enemy Distance. */
 
-	/** 적 그룹 인지 시스템. GetPerceivedEnemies의 실제 공급자. */
-	/** 敵グループ知覚システム。GetPerceivedEnemiesの実供給元。 */
+	/** 적 인카운터 인지 시스템. GetPerceivedEnemies의 실제 공급자. */
+	/** 敵エンカウンター知覚システム。GetPerceivedEnemiesの実供給元。 */
 	UPROPERTY(VisibleAnywhere, Category="Perception")
 	TObjectPtr<UPartyPerceptionComponent> PerceptionComponent;
 

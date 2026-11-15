@@ -1,4 +1,4 @@
-#include "Enemies/Group/EnemyGroup.h"
+#include "Enemies/Encounter/EnemyEncounterBase.h"
 #include "Characters/EnemyCharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
@@ -6,40 +6,40 @@
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogEnemyGroup, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogEnemyEncounter, Log, All);
 
-static TAutoConsoleVariable<bool> CVarDebugEnemyGroup(
-	TEXT("TacticalAI.DebugEnemyGroup"), false,
-	TEXT("Draw enemy group origin and member links."));
+static TAutoConsoleVariable<bool> CVarDebugEnemyEncounter(
+	TEXT("TacticalAI.DebugEnemyEncounter"), false,
+	TEXT("Draw enemy encounter origin, member links and state."));
 
-AEnemyGroup::AEnemyGroup()
+AEnemyEncounterBase::AEnemyEncounterBase()
 {
-	// Tick은 디버그 표시 전용. BeginPlay에서 스위치에 따라 켠다.
-	// Tickはデバッグ表示専用。BeginPlayでスイッチに応じて有効化。
+	// Tick은 저주기 감지(내부 누적)와 디버그 표시에 사용한다.
+	// Tickは低頻度感知（内部累積）とデバッグ表示に使用する。
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 }
 
-void AEnemyGroup::BeginPlay()
+void AEnemyEncounterBase::BeginPlay()
 {
 	Super::BeginPlay();
 	
 	TimeUntilNextSense = FMath::FRandRange(0.f, SensingInterval);
 }
 
-void AEnemyGroup::Tick(float DeltaTime)
+void AEnemyEncounterBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	
 	TickSensing(DeltaTime);
 
-	if (CVarDebugEnemyGroup.GetValueOnGameThread())
+	if (CVarDebugEnemyEncounter.GetValueOnGameThread())
 	{
-		DrawDebugGroup();
+		DrawDebugEncounter();
 	}
 }
 
-void AEnemyGroup::RegisterMember(AEnemyCharacter* Member)
+void AEnemyEncounterBase::AddMember(AEnemyCharacter* Member)
 {
 	if (!IsValid(Member) || Members.Contains(Member))
 	{
@@ -49,17 +49,17 @@ void AEnemyGroup::RegisterMember(AEnemyCharacter* Member)
 	// [1] 명부에 추가하고 back-ptr를 꽂는다 (설정 경로는 여기뿐).
 	// 名簿へ追加し、back-ptrを設定（設定経路はここのみ）。
 	Members.Add(Member);
-	Member->SetEnemyGroup(this);
+	Member->SetEncounter(this);
 
 	// [2] 파괴 통지 구독. 액터 파괴가 바인딩도 함께 정리하므로 개별 해제 불요.
 	// 破壊通知を購読。Actor破壊時にバインドも消えるため個別解除は不要。
-	Member->OnDestroyed.AddDynamic(this, &AEnemyGroup::HandleMemberDestroyed);
+	Member->OnDestroyed.AddDynamic(this, &AEnemyEncounterBase::HandleMemberDestroyed);
 
-	UE_LOG(LogEnemyGroup, Log, TEXT("グループにメンバーを登録しました。Group=%s, Member=%s, 現在数=%d"),
+	UE_LOG(LogEnemyEncounter, Log, TEXT("エンカウンターにメンバーを登録しました。Encounter=%s, Member=%s, 現在数=%d"),
 		*GetName(), *GetNameSafe(Member), Members.Num());
 }
 
-TArray<AEnemyCharacter*> AEnemyGroup::GetAliveMembers() const
+TArray<AEnemyCharacter*> AEnemyEncounterBase::GetAliveMembers() const
 {
 	TArray<AEnemyCharacter*> Result;
 	Result.Reserve(Members.Num());
@@ -73,12 +73,12 @@ TArray<AEnemyCharacter*> AEnemyGroup::GetAliveMembers() const
 	return Result;
 }
 
-bool AEnemyGroup::IsDefeated() const
+bool AEnemyEncounterBase::IsDefeated() const
 {
 	return GetAliveMembers().Num() == 0;
 }
 
-void AEnemyGroup::HandleMemberDestroyed(AActor* DestroyedActor)
+void AEnemyEncounterBase::HandleMemberDestroyed(AActor* DestroyedActor)
 {
 	// [1] 레벨 종료 중의 연쇄 파괴에서는 전멸 통지를 쏘지 않는다.
 	// レベル終了中の連鎖破壊では全滅通知を出さない。
@@ -94,12 +94,12 @@ void AEnemyGroup::HandleMemberDestroyed(AActor* DestroyedActor)
 	// 最後のメンバー死亡時のみ全滅を通知。
 	if (IsDefeated())
 	{
-		UE_LOG(LogEnemyGroup, Log, TEXT("グループが全滅しました。Group=%s"), *GetName());
-		OnGroupDefeated.Broadcast(this);
+		UE_LOG(LogEnemyEncounter, Log, TEXT("エンカウンターが全滅しました。Encounter=%s"), *GetName());
+		OnEncounterDefeated.Broadcast(this);
 	}
 }
 
-void AEnemyGroup::DrawDebugGroup() const
+void AEnemyEncounterBase::DrawDebugEncounter() const
 {
 	const FVector Origin = GetActorLocation();
 	DrawDebugSphere(GetWorld(), Origin, 40.f, 8, FColor::Red, false, -1.f);
@@ -108,16 +108,16 @@ void AEnemyGroup::DrawDebugGroup() const
 		DrawDebugLine(GetWorld(), Origin, Member->GetActorLocation(), FColor::Orange, false, -1.f);
 	}
 	
-	// TacticalAI.DebugEnemyGroup 1
+	// TacticalAI.DebugEnemyEncounter 1
 	// 状態をアンカー上にテキスト表示。
-	static const TMap<EEnemyGroupState, FColor> StateColors = {
-		{ EEnemyGroupState::Idle, FColor::Silver }, { EEnemyGroupState::Alert, FColor::Yellow },
-		{ EEnemyGroupState::Engaged, FColor::Red }, { EEnemyGroupState::Return, FColor::Cyan } };
+	static const TMap<EEnemyEncounterState, FColor> StateColors = {
+		{ EEnemyEncounterState::Idle, FColor::Silver }, { EEnemyEncounterState::Alert, FColor::Yellow },
+		{ EEnemyEncounterState::Engaged, FColor::Red }, { EEnemyEncounterState::Return, FColor::Cyan } };
 	DrawDebugString(GetWorld(), Origin + FVector(0, 0, 120.f),
-		UEnum::GetValueAsString(GroupState), nullptr, StateColors[GroupState], 0.f);
+		UEnum::GetValueAsString(EncounterState), nullptr, StateColors[EncounterState], 0.f);
 }
 
-void AEnemyGroup::TickSensing(float DeltaTime)
+void AEnemyEncounterBase::TickSensing(float DeltaTime)
 {
 	TimeUntilNextSense -= DeltaTime;
 	if (TimeUntilNextSense > 0.f || IsDefeated())
@@ -149,7 +149,7 @@ void AEnemyGroup::TickSensing(float DeltaTime)
 
 	// [2] Engaged 동안 알려진 적 갱신.
 	// Engaged中は既知敵を更新（感知周期を再利用）。
-	if (GroupState == EEnemyGroupState::Engaged)
+	if (EncounterState == EEnemyEncounterState::Engaged)
 	{
 		RefreshKnownHostiles();
 	}
@@ -158,55 +158,55 @@ void AEnemyGroup::TickSensing(float DeltaTime)
 	// 状態別の遷移判定。Exit<Enterの設定ミスはEnter距離で防御。
 	const float SafeAlertExit = FMath::Max(AlertExitDistance, AlertEnterDistance);
 
-	switch (GroupState)
+	switch (EncounterState)
 	{
-	case EEnemyGroupState::Idle:
-		if (DistToNearestMember <= AlertEnterDistance) SetGroupState(EEnemyGroupState::Alert);
+	case EEnemyEncounterState::Idle:
+		if (DistToNearestMember <= AlertEnterDistance) SetEncounterState(EEnemyEncounterState::Alert);
 		break;
 
-	case EEnemyGroupState::Alert:
-		if (DistToNearestMember <= EngageDistance)     SetGroupState(EEnemyGroupState::Engaged);
-		else if (DistToNearestMember > SafeAlertExit)  SetGroupState(EEnemyGroupState::Idle);
+	case EEnemyEncounterState::Alert:
+		if (DistToNearestMember <= EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
+		else if (DistToNearestMember > SafeAlertExit)  SetEncounterState(EEnemyEncounterState::Idle);
 		break;
 
-	case EEnemyGroupState::Engaged:
+	case EEnemyEncounterState::Engaged:
 		// 追跡諦めのみアンカー基準。
-		if (DistToAnchor > ChaseGiveUpDistance)        SetGroupState(EEnemyGroupState::Return);
+		if (DistToAnchor > ChaseGiveUpDistance)        SetEncounterState(EEnemyEncounterState::Return);
 		break;
 
-	case EEnemyGroupState::Return:
-		if (DistToNearestMember <= EngageDistance)     SetGroupState(EEnemyGroupState::Engaged);
-		else if (AreAllMembersNearAnchor())            SetGroupState(EEnemyGroupState::Idle);
+	case EEnemyEncounterState::Return:
+		if (DistToNearestMember <= EngageDistance)     SetEncounterState(EEnemyEncounterState::Engaged);
+		else if (AreAllMembersNearAnchor())            SetEncounterState(EEnemyEncounterState::Idle);
 		break;
 	}
 }
 
-void AEnemyGroup::NotifyAttackedBy(AActor* Attacker)
+void AEnemyEncounterBase::NotifyAttackedBy(AActor* Attacker)
 {
-	// 적 그룹 일원이 피격당하면 어느 상태에서든 즉시 교전. 공격자 축적은 Step B에서 소비자와 함께.
+	// 인카운터 일원이 피격당하면 어느 상태에서든 즉시 교전.
 	// どの状態からでも即時交戦へ。
 	if (IsDefeated())
 	{
 		return;
 	}
-	UE_LOG(LogEnemyGroup, Log, TEXT("被弾通知を受けました。Group=%s, Attacker=%s"),
+	UE_LOG(LogEnemyEncounter, Log, TEXT("被弾通知を受けました。Encounter=%s, Attacker=%s"),
 		*GetName(), *GetNameSafe(Attacker));
-	SetGroupState(EEnemyGroupState::Engaged);
+	SetEncounterState(EEnemyEncounterState::Engaged);
 }
 
-void AEnemyGroup::SetGroupState(const EEnemyGroupState NewState)
+void AEnemyEncounterBase::SetEncounterState(const EEnemyEncounterState NewState)
 {
-	if (GroupState == NewState)
+	if (EncounterState == NewState)
 	{
 		return;
 	}
 
-	const EEnemyGroupState OldState = GroupState;
-	GroupState = NewState;
+	const EEnemyEncounterState OldState = EncounterState;
+	EncounterState = NewState;
 
 	// Engaged 이탈 = 교전 지식 소멸. 진입 시엔 즉시 1회 갱신.
 	// Engaged離脱＝交戦知識の消滅。進入時は即時1回更新。
-	if (NewState == EEnemyGroupState::Engaged)
+	if (NewState == EEnemyEncounterState::Engaged)
 	{
 		RefreshKnownHostiles();
 	}
@@ -215,18 +215,18 @@ void AEnemyGroup::SetGroupState(const EEnemyGroupState NewState)
 		KnownHostiles.Reset();
 	}
 	
-	UE_LOG(LogEnemyGroup, Log, TEXT("グループ状態が遷移しました。Group=%s, %s → %s"),
+	UE_LOG(LogEnemyEncounter, Log, TEXT("エンカウンター状態が遷移しました。Encounter=%s, %s → %s"),
 		*GetName(), *UEnum::GetValueAsString(OldState), *UEnum::GetValueAsString(NewState));
 
-	OnGroupStateChanged.Broadcast(this, OldState, NewState);
+	OnEncounterStateChanged.Broadcast(this, OldState, NewState);
 }
 
-const APawn* AEnemyGroup::GetSensedPlayerPawn() const
+const APawn* AEnemyEncounterBase::GetSensedPlayerPawn() const
 {
 	return UGameplayStatics::GetPlayerPawn(this, 0);
 }
 
-bool AEnemyGroup::AreAllMembersNearAnchor() const
+bool AEnemyEncounterBase::AreAllMembersNearAnchor() const
 {
 	const FVector Anchor = GetActorLocation();
 	for (const AEnemyCharacter* Member : GetAliveMembers())
@@ -239,12 +239,11 @@ bool AEnemyGroup::AreAllMembersNearAnchor() const
 	return true;
 }
 
-void AEnemyGroup::RefreshKnownHostiles()
+void AEnemyEncounterBase::RefreshKnownHostiles()
 {
 	KnownHostiles.Reset();
 
 	// ⚠ 2진영 가정: "ITargetable 구현 폰 중 우리 편(적 캐릭터)이 아니면 적대".
-	//   제3 진영이 생기면 이 필터만 진영 판정으로 교체.
 	// ⚠ 2陣営前提：第3陣営導入時はこのフィルタのみ差し替え。
 	for (TActorIterator<APawn> It(GetWorld()); It; ++It)
 	{
@@ -256,12 +255,12 @@ void AEnemyGroup::RefreshKnownHostiles()
 	}
 }
 
-TArray<AActor*> AEnemyGroup::GetKnownHostiles() const
+TArray<AActor*> AEnemyEncounterBase::GetKnownHostiles() const
 {
 	// Engaged 게이트 + 유효성 필터. 자격(IsTargetable) 필터는 셀렉터 베이스의 몫.
 	// Engagedゲート＋有効性フィルタ。ターゲット可能資格フィルタ(IsTargetable)はセレクタ基底の責務。
 	TArray<AActor*> Result;
-	if (GroupState != EEnemyGroupState::Engaged)
+	if (EncounterState != EEnemyEncounterState::Engaged)
 	{
 		return Result;
 	}

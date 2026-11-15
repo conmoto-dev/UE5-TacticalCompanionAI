@@ -7,6 +7,7 @@
 #include "EnemySpawner.generated.h"
 
 class AEnemyCharacter;
+class AGroupEnemyEncounter;
 class UArrowComponent;
 class USceneComponent;
 
@@ -116,17 +117,17 @@ private:
 			DisplayName = "Composite Formation"))
 	FEnemyCompositeFormation CompositeFormation;
 
-	// 스폰될 그룹의 클래스. 경계 거리 등을 튜닝한 BP 그룹을 지점별로 선택.
-	// 生成されるグループのクラス。調整済みBPグループを地点ごとに選択可能。
+	// 스폰될 그룹 인카운터의 클래스. 경계 거리 등을 튜닝한 BP 그룹을 지점별로 선택.
+	// 生成されるグループエンカウンターのクラス。調整済みBPグループを地点ごとに選択可能。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Enemy Spawn",
 		meta = (AllowPrivateAccess = "true", DisplayName = "Enemy Group Class"))
-	TSubclassOf<AEnemyGroup> EnemyGroupClass;
+	TSubclassOf<AGroupEnemyEncounter> EnemyGroupClass;
 
-	// 이 스포너가 만든 그룹. 런타임 전용이라 저장하지 않는다.
-	// このSpawnerが生成したグループ。ランタイム専用のため保存しない。
+	// 이 스포너가 만든 그룹 인카운터. 
+	// このSpawnerが生成したグループエンカウンター。
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Enemy Spawn",
 		meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<AEnemyGroup> SpawnedGroup = nullptr;
+	TObjectPtr<AGroupEnemyEncounter> SpawnedGroup = nullptr;
 	
 	// =========================================================================
 	// Spawn Resolve

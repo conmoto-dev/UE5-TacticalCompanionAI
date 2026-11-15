@@ -1,7 +1,7 @@
 #include "Party/PartyManager.h"
 #include "Party/PartyPerceptionComponent.h"
 #include "Characters/PartyCharacter.h"
-#include "Enemies/Group/EnemyGroup.h"
+#include "Enemies/Encounter/EnemyEncounterBase.h"
 #include "Characters/EnemyCharacter.h"
 #include "AI/Components/FormationFollowComponent.h"
 #include "AI/Components/FormationBattleComponent.h"
@@ -88,13 +88,13 @@ TArray<APartyCharacter*> APartyManager::GetFollowers() const
 
 TArray<AActor*> APartyManager::GetPerceivedEnemies() const
 {
-	// 인지된 그룹의 생존 멤버를 평탄화. "살아있는 적만"이라는 기존 계약 유지 —
+	// 인지된 인카운터별 생존 멤버를 하나의 배열로 모은다. 
 	// 호출자(모드 결정·Formation)는 이 변경을 모른다.
-	// 知覚グループの生存メンバーを平坦化。既存契約はそのまま維持。
+	// 知覚エンカウンターごとの生存メンバーを一つの配列にまとめる。
 	TArray<AActor*> Result;
-	for (const AEnemyGroup* Group : PerceptionComponent->GetPerceivedGroups())
+	for (const AEnemyEncounterBase* Encounter : PerceptionComponent->GetPerceivedEncounters())
 	{
-		for (AEnemyCharacter* Member : Group->GetAliveMembers())
+		for (AEnemyCharacter* Member : Encounter->GetAliveMembers())
 		{
 			Result.Add(Member);
 		}
