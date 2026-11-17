@@ -6,10 +6,12 @@
 #include "AI/Targeting/Targetable.h"
 #include "TacticalCharacterBase.generated.h"
 
-class UAbilitySystemComponent;
 class UGameplayAbility;
+class UGameplayEffect;
+class UAbilitySystemComponent;
 class UTacticalAbilitySystemComponent;
 class UTacticalCombatAttributeSet;
+
 
 // =========================================================================
 // 동료·적이 공유하는 캐릭터 베이스 (카메라·입력 없음).
@@ -136,6 +138,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability System")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
 
+	// ==================================================
+	// 초기 전투 능력치.
+	// 初期戦闘能力値。
+	// ==================================================
+
+	// 최초 ASC 초기화 시 한 번 적용할 Instant GE. 최대 체력·현재 체력·공격력을 설정한다.
+	// ASCの初回初期化時に一度だけ適用するInstant GE。最大体力・現在体力・攻撃力を設定する。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ability System")
+	TSubclassOf<UGameplayEffect> InitialAttributesEffect;
+	
 private:
 	// =======================================================
 	// ASC 초기화

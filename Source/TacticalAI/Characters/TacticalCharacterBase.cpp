@@ -3,6 +3,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "AbilitySystem/TacticalAbilitySystemComponent.h"
 #include "AbilitySystem/Attributes/TacticalCombatAttributeSet.h"
+#include "GameplayEffect.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -86,20 +87,31 @@ void ATacticalCharacterBase::InitializeAbilitySystem()
 {
 	if (bAbilitySystemInitialized || !AbilitySystemComponent) return;
 
-	// [1] Ability가 참조할 소유자·메시·이동 컴포넌트 등의 정보를 준비한다.
-	// Ability 부여 시점에서도 ActorInfo(소유자와 Avatar 정보)를 사용할 수 있도록 먼저 초기화한다.
-	//
-	// [1] Abilityが参照する所有者・Mesh・移動Componentなどの情報を準備する。
-	// Abilityの付与処理でもActorInfoを利用できるよう、先に初期化する。
+	// [1] 초기화 GE와 Ability가 사용할 소유자·Avatar 정보를 준비한다.
+	// [1] 初期化GEとAbilityが使用する所有者・Avatar情報を準備する。
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
 
-	// [2] 캐릭터 BP에서 지정한 시작 Ability를 ASC에 부여한다.
-	// 중복 부여 방지는 Tactical ASC가 담당한다.
-	//
-	// [2] キャラクターBPで指定した初期AbilityをASCへ付与する。
-	// 重複付与の防止はTactical ASCが担当する。
 	if (HasAuthority())
 	{
+		// [2] Ability를 부여하기 전에 캐릭터별 초기 능력치를 적용한다.
+		// [2] Abilityを付与する前に、キャラクターごとの初期能力値を適用する。
+		if (InitialAttributesEffect)
+		{
+			const FGameplayEffectSpecHandle InitialSpec =
+				AbilitySystemComponent->MakeOutgoingSpec(
+					InitialAttributesEffect,
+					1.f,
+					AbilitySystemComponent->MakeEffectContext());
+
+			if (InitialSpec.IsValid())
+			{
+				AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(
+					*InitialSpec.Data.Get());
+			}
+		}
+
+		// [3] 초기 능력치 적용 후 시작 Ability를 부여한다.
+		// [3] 初期能力値の適用後、初期Abilityを付与する。
 		AbilitySystemComponent->GiveStartupAbilities(StartupAbilities);
 	}
 
